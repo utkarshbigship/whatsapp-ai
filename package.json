@@ -1,0 +1,17 @@
+{
+  "name": "escalation-analyst",
+  "version": "3.0.0",
+  "description": "WhatsApp escalation analyst — prompt-driven reports with multimodal media understanding",
+  "main": "src/index.js",
+  "scripts": { "start": "node src/index.js" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@google/genai": "^2.8.0",
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-session": "^1.18.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  }
+}
