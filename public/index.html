@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Escalation Analyst · Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- login overlay -->
+  <div id="login" class="login-overlay">
+    <form id="loginForm" class="login-card">
+      <h1>Escalation Analyst</h1>
+      <p class="login-sub">Sign in to continue</p>
+      <input id="username" placeholder="Username" autocomplete="username" />
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button type="submit" class="btn">Sign in</button>
+      <div id="loginErr" class="login-err"></div>
+    </form>
+  </div>
+
+  <div id="app" style="display:none">
+    <header class="topbar">
+      <div class="brand"><h1>Escalation Analyst</h1><span class="ver">console v3</span></div>
+      <div class="status"><span class="dot"></span><span id="statusText">live</span></div>
+      <button id="logout" class="btn-ghost">Sign out</button>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head"><h2>Groups</h2><span id="groupCount" class="ver"></span></div>
+        <div class="search-wrap"><input id="search" class="search" placeholder="Filter groups…" /></div>
+        <div id="groupList"></div>
+      </aside>
+
+      <main class="detail" id="detail">
+        <div class="detail-empty">
+          <div class="big">Select a group</div>
+          <div>Pick a group to analyse escalations and view past reports.</div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
