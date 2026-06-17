@@ -140,12 +140,14 @@ const stmtPurgeMsgs     = db.prepare(`DELETE FROM messages WHERE timestamp  < @c
 const stmtPurgeReports  = db.prepare(`DELETE FROM reports  WHERE created_at < @cutoff`);
 
 // Latest group report per group whose window falls inside [from, to].
+// MAX(created_at) in the SELECT makes SQLite return the bare columns from the
+// latest row per group (the documented single-aggregate behaviour).
 const stmtGroupReportsForWindow = db.prepare(`
   SELECT id, group_id, group_name, report, metrics_json, message_count,
-         window_label, period_start, period_end, created_at
+         window_label, period_start, period_end, MAX(created_at) AS created_at
   FROM reports
   WHERE scope = 'group' AND period_start >= @from AND period_end <= @to
-  GROUP BY group_id HAVING MAX(created_at)
+  GROUP BY group_id
   ORDER BY group_name ASC
 `);
 const stmtMasterReports = db.prepare(`

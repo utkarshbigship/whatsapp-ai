@@ -100,8 +100,15 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
  * Runs one master per cluster, restricted to that run's frozen group set.
  */
 async function runMasterFromLatestRun() {
-  const run = db.getLatestCompleteRun();
-  if (!run) { logger.info('Master schedule: no complete group run to aggregate.'); return; }
+  // Verification gate: only aggregate when the MOST RECENT group run is complete.
+  // If it is still running (e.g. a large group batch is taking longer than the
+  // 15-min gap), skip this cycle rather than aggregate a stale earlier run.
+  const run = db.getLatestRun(null);
+  if (!run) { logger.info('Master schedule: no group run found.'); return; }
+  if (run.status !== 'complete') {
+    logger.info(`Master schedule: latest group run #${run.id} is "${run.status}" — skipping until it completes.`);
+    return;
+  }
   const window = { from: run.window_from, to: run.window_to, label: run.window_label };
   const clusters = db.listClusters();
   for (const c of clusters) {
