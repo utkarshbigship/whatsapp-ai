@@ -21,6 +21,7 @@ async function main() {
   logger.info('Starting Escalation Analyst...');
   const client = whatsapp.init();
   server.start();
+  require('./scheduler').start();
 
   // optional: --analyse "Group Name" generates a report once ready (for testing)
   const idx = process.argv.indexOf('--analyse');

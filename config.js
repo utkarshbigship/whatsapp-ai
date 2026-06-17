@@ -20,10 +20,32 @@ module.exports = {
     maxTranscriptChars: 800000,
   },
 
+  // Multi-agent run settings
+  agents: {
+    // How many group-agent Gemini calls run in parallel during a scheduled/master run.
+    // Tune to your Gemini tier's rate limit — raise it as your quota allows.
+    groupConcurrency: parseInt(process.env.GROUP_AGENT_CONCURRENCY || '4', 10),
+    // Thinking level used for scheduled group reports (cheaper than the on-demand default).
+    scheduledThinkingLevel: process.env.GROUP_THINKING || 'medium',
+  },
+
+  // Master (cross-group) aggregation
+  master: {
+    groupIdPrefix: '__master__',  // master report group_id = `__master__:<clusterId>`
+    batchChars: 600000,           // per-batch cap for map-reduce (below gemini.maxTranscriptChars)
+  },
+
   // Prompts (edit the .md files, no code change needed)
   prompts: {
     analyst: path.join(__dirname, 'prompts', 'escalation-analyst.md'),
+    master: path.join(__dirname, 'prompts', 'master-analyst.md'),
     mediaExtract: path.join(__dirname, 'prompts', 'media-extract.md'),
+  },
+
+  // Scheduler — run times are stored in the DB (managed from the dashboard), not here.
+  scheduler: {
+    enabled: process.env.SCHEDULER_ENABLED !== 'false',
+    timezone: 'Asia/Kolkata',
   },
 
   // Analysis window

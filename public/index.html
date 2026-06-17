@@ -24,11 +24,16 @@
   <div id="app" style="display:none">
     <header class="topbar">
       <div class="brand"><h1>Escalation Analyst</h1><span class="ver">console v3</span></div>
+      <div class="view-toggle">
+        <button id="viewGroups" class="btn-ghost active">Groups</button>
+        <button id="viewMaster" class="btn-ghost">Master</button>
+        <button id="viewSettings" class="btn-ghost">Settings</button>
+      </div>
       <div class="status"><span class="dot"></span><span id="statusText">live</span></div>
       <button id="logout" class="btn-ghost">Sign out</button>
     </header>
 
-    <div class="layout">
+    <div class="layout" id="groupsView">
       <aside class="sidebar">
         <div class="sidebar-head"><h2>Groups</h2><span id="groupCount" class="ver"></span></div>
         <div class="search-wrap"><input id="search" class="search" placeholder="Filter groups…" /></div>
@@ -42,6 +47,55 @@
         </div>
       </main>
     </div>
+
+    <main class="detail" id="masterView" style="display:none">
+      <div class="detail-head"><div><h2>Master report — all groups</h2><div class="sub">Cross-group aggregate</div></div></div>
+      <div class="section">
+        <h3>Analyse cluster</h3>
+        <div class="controls">
+          <label>Cluster <select id="mCluster" class="date-field"></select></label>
+          <label>From <input type="date" id="mFromDate" class="date-field"></label>
+          <label>To <input type="date" id="mToDate" class="date-field"></label>
+          <label><input type="checkbox" id="mLast24" checked> last 24h (ignore dates)</label>
+          <label><input type="checkbox" id="mDeliver"> send to WhatsApp</label>
+          <button class="btn" id="mRunBtn">Analyse all groups</button>
+        </div>
+        <div id="mContextPicker" class="context-picker"></div>
+      </div>
+      <div class="section"><h3>Master reports</h3><div id="masterReports"><div class="loading">Loading…</div></div></div>
+    </main>
+
+    <main class="detail" id="settingsView" style="display:none">
+      <div class="detail-head"><div><h2>Settings</h2><div class="sub">Clusters & schedules</div></div></div>
+      <div class="section">
+        <h3>Clusters</h3>
+        <div class="controls">
+          <label>ID <input id="clId" class="date-field" placeholder="south-zone"></label>
+          <label>Name <input id="clName" class="date-field" placeholder="South Zone"></label>
+          <button class="btn" id="clAddBtn">Add / rename cluster</button>
+        </div>
+        <div id="clusterList" class="loading">Loading…</div>
+      </div>
+      <div class="section">
+        <h3>Assign groups to clusters</h3>
+        <div id="assignList" class="loading">Loading…</div>
+      </div>
+      <div class="section">
+        <h3>Schedules</h3>
+        <div class="controls">
+          <label>Time <input id="schTime" type="time" class="date-field" value="22:00"></label>
+          <label>Label <input id="schLabel" class="date-field" placeholder="Nightly"></label>
+          <label>Window
+            <select id="schWindow" class="date-field">
+              <option value="previous-day">previous day</option>
+              <option value="today-so-far">today so far</option>
+            </select>
+          </label>
+          <button class="btn" id="schAddBtn">Add schedule</button>
+        </div>
+        <div id="scheduleList" class="loading">Loading…</div>
+      </div>
+    </main>
   </div>
 
   <div id="toast" class="toast"></div>
