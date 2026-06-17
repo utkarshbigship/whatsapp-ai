@@ -166,7 +166,7 @@ async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [
 
   const blockFor = (g) =>
     `### GROUP id=${g.groupId} name="${g.groupName}"\n` +
-    `(When citing this group, tag it EXACTLY as {{G:${g.groupId}}}${g.groupName})\n` +
+    `(When citing this group, tag it EXACTLY as {{G:${g.groupId}|${g.groupName}}})\n` +
     `${g.report}\n`;
 
   const blocks = groupReports.map(blockFor);

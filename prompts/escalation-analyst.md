@@ -184,6 +184,9 @@ null). These numbers MUST match your table.
 
 ## 3. Qualitative flags (brief — a few tight lines each, only if present)
 
+Use clean single-level Markdown bullets exactly as `- **Label**: text` (no leading
+spaces, no stray or nested asterisks):
+
 - **Seller frustration**: who, and the exact line(s) showing rising anger.
 - **Critical**: the escalations the manager must act on now, and why.
 - **Abuse / legal**: quote each flagged line with seller + time.

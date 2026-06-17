@@ -61,9 +61,29 @@ db.exec(`
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  INTEGER DEFAULT (strftime('%s','now'))
   );
+
+  CREATE TABLE IF NOT EXISTS report_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger         TEXT,
+    cluster_id      TEXT,
+    window_label    TEXT,
+    window_from     INTEGER,
+    window_to       INTEGER,             -- cutoff (frozen snapshot time)
+    group_ids       TEXT,                -- JSON array of the frozen group set
+    total_groups    INTEGER DEFAULT 0,
+    completed_groups INTEGER DEFAULT 0,
+    current_group   TEXT,
+    phase           TEXT DEFAULT 'groups', -- groups | master | done | error
+    status          TEXT DEFAULT 'running', -- running | complete | error
+    master_report_id INTEGER,
+    error           TEXT,
+    started_at      INTEGER DEFAULT (strftime('%s','now')),
+    finished_at     INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_runs_started ON report_runs(started_at);
 `);
 
-// --- Idempotent migrations: add columns to pre-existing reports tables ---
+// --- Idempotent migrations: add columns to pre-existing tables ---
 function ensureColumn(table, column, ddl) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all();
   if (!cols.some((c) => c.name === column)) {
@@ -73,6 +93,7 @@ function ensureColumn(table, column, ddl) {
 ensureColumn('reports', 'scope',        `scope TEXT NOT NULL DEFAULT 'group'`);
 ensureColumn('reports', 'metrics_json', `metrics_json TEXT`);
 ensureColumn('reports', 'cluster_id',   `cluster_id TEXT`);
+ensureColumn('schedules', 'type',       `type TEXT NOT NULL DEFAULT 'group'`); // group | master
 db.exec(`CREATE INDEX IF NOT EXISTS idx_rep_scope ON reports(scope, period_start, period_end);`);
 
 // Seed the default cluster so unassigned groups always have a home.
@@ -150,6 +171,17 @@ const stmtGroupsWithActivity = db.prepare(`
   FROM messages WHERE timestamp >= @from AND timestamp <= @to
   GROUP BY group_id ORDER BY message_count DESC
 `);
+// Latest group report for a single group (for smart-reuse freshness checks).
+const stmtLatestGroupReport = db.prepare(`
+  SELECT id, period_start, period_end, created_at
+  FROM reports WHERE group_id = @group_id AND scope = 'group'
+  ORDER BY created_at DESC LIMIT 1
+`);
+// Count messages (and distinct groups) arriving after a cutoff (the "new since" tag).
+const stmtCountMessagesSince = db.prepare(`
+  SELECT COUNT(*) AS messages, COUNT(DISTINCT group_id) AS groups
+  FROM messages WHERE timestamp > @ts
+`);
 
 // --- clusters ---
 const stmtListClusters   = db.prepare(`SELECT id, name, created_at FROM clusters ORDER BY name ASC`);
@@ -167,16 +199,30 @@ const stmtGroupsForCluster  = db.prepare(`SELECT group_id, group_name FROM group
 const stmtClusterForGroup   = db.prepare(`SELECT cluster_id FROM group_clusters WHERE group_id = @group_id`);
 
 // --- schedules ---
-const stmtListSchedules  = db.prepare(`SELECT id, label, time_hhmm, window_mode, enabled, created_at FROM schedules ORDER BY time_hhmm ASC`);
+const stmtListSchedules  = db.prepare(`SELECT id, label, time_hhmm, window_mode, type, enabled, created_at FROM schedules ORDER BY time_hhmm ASC`);
 const stmtCreateSchedule = db.prepare(`
-  INSERT INTO schedules (label, time_hhmm, window_mode, enabled)
-  VALUES (@label, @time_hhmm, @window_mode, @enabled)
+  INSERT INTO schedules (label, time_hhmm, window_mode, type, enabled)
+  VALUES (@label, @time_hhmm, @window_mode, @type, @enabled)
 `);
 const stmtUpdateSchedule = db.prepare(`
-  UPDATE schedules SET label = @label, time_hhmm = @time_hhmm, window_mode = @window_mode, enabled = @enabled
+  UPDATE schedules SET label = @label, time_hhmm = @time_hhmm, window_mode = @window_mode, type = @type, enabled = @enabled
   WHERE id = @id
 `);
 const stmtDeleteSchedule = db.prepare(`DELETE FROM schedules WHERE id = @id`);
+
+// --- report runs (snapshot + progress + verification) ---
+const stmtCreateRun = db.prepare(`
+  INSERT INTO report_runs (trigger, cluster_id, window_label, window_from, window_to, group_ids, total_groups, phase, status)
+  VALUES (@trigger, @cluster_id, @window_label, @window_from, @window_to, @group_ids, @total_groups, @phase, @status)
+`);
+const stmtGetRun = db.prepare(`SELECT * FROM report_runs WHERE id = @id`);
+const stmtLatestRunForCluster = db.prepare(`
+  SELECT * FROM report_runs WHERE (@cluster_id IS NULL OR cluster_id = @cluster_id)
+  ORDER BY started_at DESC, id DESC LIMIT 1
+`);
+const stmtLatestCompleteRun = db.prepare(`
+  SELECT * FROM report_runs WHERE status = 'complete' ORDER BY window_to DESC, id DESC LIMIT 1
+`);
 
 module.exports = {
   insertMessage(msg) { return stmtInsertMsg.run(msg).lastInsertRowid; },
@@ -218,6 +264,49 @@ module.exports = {
     return stmtMasterReportsBefore.all({ cluster_id: clusterId, beforeTs, limit });
   },
   getGroupsWithActivity(from, to) { return stmtGroupsWithActivity.all({ from, to }); },
+  getLatestGroupReport(groupId) { return stmtLatestGroupReport.get({ group_id: groupId }); },
+  countMessagesSince(ts, groupIds) {
+    const r = stmtCountMessagesSince.get({ ts });
+    if (!Array.isArray(groupIds) || !groupIds.length) return { messages: r.messages, groups: r.groups };
+    // Restrict to a group set when given (cluster scope).
+    const placeholders = groupIds.map(() => '?').join(',');
+    const row = db.prepare(
+      `SELECT COUNT(*) AS messages, COUNT(DISTINCT group_id) AS groups
+       FROM messages WHERE timestamp > ? AND group_id IN (${placeholders})`
+    ).get(ts, ...groupIds);
+    return { messages: row.messages, groups: row.groups };
+  },
+
+  // --- report runs ---
+  createRun(row) {
+    return stmtCreateRun.run({
+      trigger: row.trigger || 'manual', cluster_id: row.cluster_id || null,
+      window_label: row.window_label || null, window_from: row.window_from, window_to: row.window_to,
+      group_ids: JSON.stringify(row.group_ids || []), total_groups: (row.group_ids || []).length,
+      phase: 'groups', status: 'running',
+    }).lastInsertRowid;
+  },
+  updateRun(id, patch) {
+    const keys = Object.keys(patch);
+    if (!keys.length) return;
+    const set = keys.map((k) => `${k} = @${k}`).join(', ');
+    db.prepare(`UPDATE report_runs SET ${set} WHERE id = @id`).run({ id, ...patch });
+  },
+  getRun(id) {
+    const r = stmtGetRun.get({ id });
+    if (r && r.group_ids) { try { r.group_ids = JSON.parse(r.group_ids); } catch { r.group_ids = []; } }
+    return r;
+  },
+  getLatestRun(clusterId) {
+    const r = stmtLatestRunForCluster.get({ cluster_id: clusterId || null });
+    if (r && r.group_ids) { try { r.group_ids = JSON.parse(r.group_ids); } catch { r.group_ids = []; } }
+    return r;
+  },
+  getLatestCompleteRun() {
+    const r = stmtLatestCompleteRun.get();
+    if (r && r.group_ids) { try { r.group_ids = JSON.parse(r.group_ids); } catch { r.group_ids = []; } }
+    return r;
+  },
 
   // --- clusters ---
   listClusters() { return stmtListClusters.all(); },
@@ -236,13 +325,15 @@ module.exports = {
   createSchedule(row) {
     return stmtCreateSchedule.run({
       label: row.label || null, time_hhmm: row.time_hhmm,
-      window_mode: row.window_mode || 'previous-day', enabled: row.enabled ? 1 : 0,
+      window_mode: row.window_mode || 'previous-day',
+      type: row.type === 'master' ? 'master' : 'group', enabled: row.enabled ? 1 : 0,
     });
   },
   updateSchedule(row) {
     return stmtUpdateSchedule.run({
       id: row.id, label: row.label || null, time_hhmm: row.time_hhmm,
-      window_mode: row.window_mode || 'previous-day', enabled: row.enabled ? 1 : 0,
+      window_mode: row.window_mode || 'previous-day',
+      type: row.type === 'master' ? 'master' : 'group', enabled: row.enabled ? 1 : 0,
     });
   },
   deleteSchedule(id) { return stmtDeleteSchedule.run({ id }); },

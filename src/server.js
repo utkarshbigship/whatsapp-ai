@@ -7,7 +7,8 @@ const db      = require('./db');
 const whatsapp = require('./whatsapp');
 const runlock  = require('./runlock');
 const scheduler = require('./scheduler');
-const { generateReport, generateMasterReport, formatForDelivery, formatMasterForDelivery } = require('./reportEngine');
+const orchestrator = require('./orchestrator');
+const { generateReport, formatForDelivery } = require('./reportEngine');
 
 function tzTodayStart() {
   const local = new Date(new Date().toLocaleString('en-US', { timeZone: config.analysis.timezone }));
@@ -104,7 +105,15 @@ function start() {
     try {
       const clusterId = req.query.clusterId || 'all';
       const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
-      res.json({ reports: db.getMasterReports(clusterId, limit), lock: runlock.status(clusterId) });
+      const reports = db.getMasterReports(clusterId, limit);
+      // "New since" awareness tag for the latest master report.
+      let newSince = null;
+      if (reports.length) {
+        const latest = reports[0];
+        const groupIds = clusterId !== 'all' ? db.getGroupsForCluster(clusterId).map((g) => g.group_id) : null;
+        newSince = db.countMessagesSince(latest.period_end, groupIds);
+      }
+      res.json({ reports, lock: runlock.status(clusterId), newSince });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -117,31 +126,30 @@ function start() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // body: { clusterId?, fromDate?, toDate?, hours?, contextReportIds?, deliver? }
-  app.post('/api/master/analyse', requireAuth, async (req, res) => {
+  // Progress of the latest run for a cluster (drives the dashboard progress panel).
+  app.get('/api/master/progress', requireAuth, (req, res) => {
+    try {
+      const clusterId = req.query.clusterId || 'all';
+      const run = db.getLatestRun(clusterId) || db.getLatestRun(null);
+      res.json({ run: run || null, lock: runlock.status(clusterId) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Trigger the full pipeline (group reports -> master) asynchronously.
+  // body: { clusterId?, fromDate?, toDate?, hours? }
+  app.post('/api/master/analyse', requireAuth, (req, res) => {
     const clusterId = req.body?.clusterId || 'all';
     try {
-      // Don't start a duplicate while a scheduled/other run is in progress for this cluster.
       const lock = runlock.status(clusterId);
-      if (lock.running) {
-        return res.status(202).json({ status: 'in_progress', startedAt: lock.startedAt });
-      }
-      runlock.begin(clusterId);
-      try {
-        const window = { fromDate: req.body?.fromDate, toDate: req.body?.toDate, hours: req.body?.hours };
-        const contextReportIds = req.body?.contextReportIds || [];
-        const result = await generateMasterReport({ clusterId, window, contextReportIds, trigger: 'dashboard' });
-        if (!result) return res.status(422).json({ error: 'No group reports in that window. Generate group reports first.' });
+      if (lock.running) return res.status(202).json({ status: 'in_progress', startedAt: lock.startedAt });
 
-        let delivered = false;
-        if (req.body?.deliver && whatsapp.isReady()) {
-          await whatsapp.sendText(config.recipient, formatMasterForDelivery(result));
-          delivered = true;
-        }
-        res.json({ ...result, delivered });
-      } finally {
-        runlock.end(clusterId);
-      }
+      const { fromDate, toDate, hours } = req.body || {};
+      // Date range / hours -> window; otherwise default to today-so-far snapshot (cutoff = now).
+      const window = (fromDate && toDate) ? { fromDate, toDate } : (hours ? { hours } : { mode: 'today-so-far' });
+      // Fire-and-forget; the dashboard polls /api/master/progress.
+      orchestrator.runBatch({ clusterId, window, trigger: 'dashboard', smartReuse: true, withMaster: true })
+        .catch((e) => logger.error('master runBatch:', e.message));
+      res.json({ status: 'started' });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 

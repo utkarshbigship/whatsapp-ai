@@ -57,10 +57,10 @@
           <label>From <input type="date" id="mFromDate" class="date-field"></label>
           <label>To <input type="date" id="mToDate" class="date-field"></label>
           <label><input type="checkbox" id="mLast24" checked> last 24h (ignore dates)</label>
-          <label><input type="checkbox" id="mDeliver"> send to WhatsApp</label>
           <button class="btn" id="mRunBtn">Analyse all groups</button>
         </div>
         <div id="mContextPicker" class="context-picker"></div>
+        <div id="masterProgress" class="progress-panel" style="display:none"></div>
       </div>
       <div class="section"><h3>Master reports</h3><div id="masterReports"><div class="loading">Loading…</div></div></div>
     </main>
@@ -82,13 +82,20 @@
       </div>
       <div class="section">
         <h3>Schedules</h3>
+        <div class="hint">Add a <b>group</b> schedule, then a <b>master</b> schedule ~15 min later. The master run only aggregates a group run once all its reports are saved.</div>
         <div class="controls">
+          <label>Agent
+            <select id="schType" class="date-field">
+              <option value="group">group agent</option>
+              <option value="master">master agent</option>
+            </select>
+          </label>
           <label>Time <input id="schTime" type="time" class="date-field" value="22:00"></label>
           <label>Label <input id="schLabel" class="date-field" placeholder="Nightly"></label>
           <label>Window
             <select id="schWindow" class="date-field">
-              <option value="previous-day">previous day</option>
               <option value="today-so-far">today so far</option>
+              <option value="previous-day">previous day</option>
             </select>
           </label>
           <button class="btn" id="schAddBtn">Add schedule</button>
