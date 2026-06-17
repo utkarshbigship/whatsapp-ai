@@ -143,13 +143,16 @@ function renderTotalsBlock(totals, groupCount, withMetricsCount) {
  * Totals are summed in code; the LLM writes only prose/flags/group-tags.
  * @returns {Promise<{report, messageCount, windowLabel, metrics}|null>}
  */
-async function generateMasterReport({ clusterId = 'all', window, contextReportIds, trigger = 'manual' }) {
+async function generateMasterReport({ clusterId = 'all', window, contextReportIds, trigger = 'manual', groupIds: frozenIds } = {}) {
   const { from, to, label } = resolveWindow(window || {});
 
   // Restrict to this cluster's groups (default cluster 'all' = every group with a report in window).
-  let groupIds = null;
+  let groupIds = Array.isArray(frozenIds) ? frozenIds.slice() : null;
   if (clusterId && clusterId !== 'all') {
-    groupIds = db.getGroupsForCluster(clusterId).map((g) => g.group_id);
+    const clusterIds = db.getGroupsForCluster(clusterId).map((g) => g.group_id);
+    if (!clusterIds.length) return null;
+    // Intersect the frozen set with the cluster membership when both are present.
+    groupIds = groupIds ? groupIds.filter((id) => clusterIds.includes(id)) : clusterIds;
     if (!groupIds.length) return null;
   }
 
@@ -181,7 +184,7 @@ async function generateMasterReport({ clusterId = 'all', window, contextReportId
   const report = `${totalsBlock}\n\n${prose}`;
   const messageCount = rows.reduce((n, r) => n + (r.message_count || 0), 0);
 
-  db.insertReport({
+  const ins = db.insertReport({
     group_id: `${config.master.groupIdPrefix}:${clusterId}`,
     group_name: clusterId === 'all' ? 'All Groups (Master)' : `Master — ${clusterId}`,
     report, message_count: messageCount, window_label: label,
@@ -191,7 +194,7 @@ async function generateMasterReport({ clusterId = 'all', window, contextReportId
     metrics_json: JSON.stringify({ ...totals, group_count: groupReports.length }),
   });
 
-  return { report, messageCount: groupReports.length, windowLabel: label, metrics: totals };
+  return { reportId: Number(ins.lastInsertRowid), report, messageCount: groupReports.length, windowLabel: label, metrics: totals };
 }
 
 function safeParse(s) { try { return JSON.parse(s); } catch { return null; } }

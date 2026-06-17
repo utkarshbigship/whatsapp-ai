@@ -19,7 +19,7 @@ Each group arrives as a block:
 
 ```
 ### GROUP id=<group_id> name="<Group Name>"
-(When citing this group, tag it EXACTLY as {{G:<group_id>}}<Group Name>)
+(When citing this group, tag it EXACTLY as {{G:<group_id>|<Group Name>}})
 <that group's full report>
 ```
 
@@ -42,8 +42,8 @@ already-summarised partials; treat them as authoritative and preserve their grou
   numbers, and never emit a JSON block containing a `"raised"` key — that is reserved
   for the group reports and the code-computed totals.
 - **Always tag groups.** Whenever you name a group, write it using the token
-  `{{G:<group_id>}}<Group Name>` exactly as given in that group's header — e.g.
-  `{{G:120363...@g.us}}Team BigShip`. Never mention a group without its token; the
+  `{{G:<group_id>|<Group Name>}}` exactly as given in that group's header — e.g.
+  `{{G:120363...@g.us|Team BigShip}}`. Never mention a group without its token; the
   token is turned into a clickable link in the dashboard.
 - Be specific and comparative: rank groups, cite which group each pattern/flag comes
   from. Dense over wordy.
@@ -55,12 +55,12 @@ already-summarised partials; treat them as authoritative and preserve their grou
 biggest cross-group problem.
 
 **Worst groups (ranked)** — a short ranked list; each line tags the group with
-`{{G:..}}` and gives the one-line reason (volume, critical count, neglect ratio,
+`{{G:..|..}}` and gives the one-line reason (volume, critical count, neglect ratio,
 frustration, fake closures).
 
 **Cross-group patterns** — recurring categories/subcategories or failure modes seen
 across multiple groups (e.g. "First Mile pickup-not-updated spiking in
-{{G:..}}Name and {{G:..}}Name").
+{{G:id1|Name}} and {{G:id2|Name}}").
 
 **First vs Last Mile** — where the load and the failures concentrate, by mile, with
 the groups driving each.

@@ -223,7 +223,8 @@ body {
 .view-toggle { display: flex; gap: 4px; margin-left: 8px; }
 .btn-ghost.active { color: var(--text); border-color: var(--signal-dim); background: var(--panel-2); }
 
-#masterView, #settingsView { overflow-y: auto; }
+/* scroll fix: panes need an explicit height to scroll under the fixed topbar */
+#masterView, #settingsView { height: calc(100vh - 56px); overflow-y: auto; }
 
 .cluster-pick { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 
@@ -251,3 +252,80 @@ body {
 .assign-name { flex: 1; }
 .assign-sel { max-width: 180px; }
 .sch-del { margin-left: auto; }
+
+/* ---- v3.2: rendered reports, metrics, progress, exports ---- */
+.hint { font-size: 12px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+.hint b { color: var(--text); }
+
+/* report selector toolbar + download buttons */
+.report-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.report-select {
+  background: var(--ink); border: 1px solid var(--line); color: var(--text);
+  font-size: 13px; padding: 8px 11px; border-radius: 7px; min-width: 260px; flex: 1;
+}
+.dl-bar { display: flex; gap: 8px; }
+.dl-btn2 {
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  padding: 8px 14px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; transition: background 0.12s, border-color 0.12s;
+}
+.dl-btn2:hover { border-color: var(--muted); background: var(--line); }
+.dl-btn2.primary { border-color: var(--signal-dim); color: var(--signal); }
+.dl-btn2.primary:hover { background: var(--signal-dim); color: var(--text); }
+
+/* rendered markdown report */
+.md-report { font-size: 13.5px; line-height: 1.6; }
+.md-report .md-h { color: var(--signal); margin: 16px 0 8px; }
+.md-report h2.md-h { font-size: 16px; }
+.md-report h3.md-h { font-size: 14px; }
+.md-report h4.md-h { font-size: 13px; color: var(--text); }
+.md-report .md-p { margin: 8px 0; }
+.md-report .md-ul { margin: 8px 0 8px 20px; }
+.md-report .md-ul li { margin: 3px 0; }
+.md-report strong { color: var(--amber); font-weight: 600; }
+.md-report em { color: var(--text); font-style: italic; }
+.md-report .md-pre {
+  background: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 12px; font-family: var(--mono); font-size: 11px; color: var(--muted);
+  overflow-x: auto; white-space: pre-wrap;
+}
+
+/* tables */
+.md-table-wrap { overflow-x: auto; margin: 10px 0; }
+.md-table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.md-table th, .md-table td {
+  border: 1px solid var(--line); padding: 7px 9px; text-align: left; vertical-align: top;
+}
+.md-table th { background: var(--panel-2); color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em; font-size: 11px; }
+.md-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+
+/* metrics grid */
+.metrics {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px; margin: 12px 0;
+}
+.metric {
+  background: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 3px;
+}
+.metric .v { font-size: 20px; font-weight: 600; color: var(--amber); font-family: var(--mono); }
+.metric .k { font-size: 11px; color: var(--muted); }
+
+/* progress panel */
+.progress-panel {
+  background: var(--panel); border: 1px solid var(--signal-dim); border-radius: 8px;
+  padding: 14px 16px; margin-top: 14px;
+}
+.progress-label { font-size: 13px; color: var(--text); margin-bottom: 10px; }
+.progress-bar { height: 8px; background: var(--ink); border-radius: 5px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--signal); transition: width 0.4s ease; }
+.progress-fill.err { background: var(--danger); }
+
+/* new-since awareness tag */
+.new-since {
+  background: rgba(232,184,75,0.1); border: 1px solid var(--amber); color: var(--amber);
+  padding: 9px 13px; border-radius: 8px; font-size: 13px; margin-bottom: 14px;
+}
+
+.chip-master { color: var(--signal) !important; }
