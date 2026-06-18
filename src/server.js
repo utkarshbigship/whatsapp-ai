@@ -61,8 +61,8 @@ function start() {
 
   app.get('/api/groups/:id/reports', requireAuth, (req, res) => {
     try {
-      const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
-      res.json({ reports: db.getReportsForGroup(req.params.id, limit) });
+      const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+      res.json({ reports: db.getReportsForGroup(req.params.id, { days }) });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -104,8 +104,8 @@ function start() {
   app.get('/api/master/reports', requireAuth, (req, res) => {
     try {
       const clusterId = req.query.clusterId || 'all';
-      const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
-      const reports = db.getMasterReports(clusterId, limit);
+      const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+      const reports = db.getMasterReports(clusterId, { days });
       // "New since" awareness tag for the latest master report.
       let newSince = null;
       if (reports.length) {
@@ -113,7 +113,7 @@ function start() {
         const groupIds = clusterId !== 'all' ? db.getGroupsForCluster(clusterId).map((g) => g.group_id) : null;
         newSince = db.countMessagesSince(latest.period_end, groupIds);
       }
-      res.json({ reports, lock: runlock.status(clusterId), newSince });
+      res.json({ reports, lock: runlock.anyBatchRunning(), newSince });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
@@ -131,23 +131,25 @@ function start() {
     try {
       const clusterId = req.query.clusterId || 'all';
       const run = db.getLatestRun(clusterId) || db.getLatestRun(null);
-      res.json({ run: run || null, lock: runlock.status(clusterId) });
+      res.json({ run: run || null, lock: runlock.anyBatchRunning() });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   // Trigger the full pipeline (group reports -> master) asynchronously.
-  // body: { clusterId?, fromDate?, toDate?, hours? }
+  // body: { clusterId?, fromDate?, toDate?, hours?, contextReportIds? }
   app.post('/api/master/analyse', requireAuth, (req, res) => {
     const clusterId = req.body?.clusterId || 'all';
     try {
-      const lock = runlock.status(clusterId);
+      // Serialize against ANY batch (scheduled group run or another manual master).
+      const lock = runlock.anyBatchRunning();
       if (lock.running) return res.status(202).json({ status: 'in_progress', startedAt: lock.startedAt });
 
       const { fromDate, toDate, hours } = req.body || {};
+      const contextReportIds = req.body?.contextReportIds || [];
       // Date range / hours -> window; otherwise default to today-so-far snapshot (cutoff = now).
       const window = (fromDate && toDate) ? { fromDate, toDate } : (hours ? { hours } : { mode: 'today-so-far' });
       // Fire-and-forget; the dashboard polls /api/master/progress.
-      orchestrator.runBatch({ clusterId, window, trigger: 'dashboard', smartReuse: true, withMaster: true })
+      orchestrator.runBatch({ clusterId, window, trigger: 'dashboard', smartReuse: true, withMaster: true, contextReportIds })
         .catch((e) => logger.error('master runBatch:', e.message));
       res.json({ status: 'started' });
     } catch (e) { res.status(500).json({ error: e.message }); }

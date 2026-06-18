@@ -49,13 +49,13 @@
     </div>
 
     <main class="detail" id="masterView" style="display:none">
-      <div class="detail-head"><div><h2>Master report — all groups</h2><div class="sub">Cross-group aggregate</div></div></div>
+      <div class="detail-head"><div><h2 id="masterTitle">Master report</h2><div class="sub">Cross-group aggregate</div></div></div>
       <div class="section">
         <h3>Analyse cluster</h3>
         <div class="controls">
           <label>Cluster <select id="mCluster" class="date-field"></select></label>
-          <label>From <input type="date" id="mFromDate" class="date-field"></label>
-          <label>To <input type="date" id="mToDate" class="date-field"></label>
+          <label>From <input type="datetime-local" id="mFromDate" class="date-field"></label>
+          <label>To <input type="datetime-local" id="mToDate" class="date-field"></label>
           <label><input type="checkbox" id="mLast24" checked> last 24h (ignore dates)</label>
           <button class="btn" id="mRunBtn">Analyse all groups</button>
         </div>
@@ -82,14 +82,8 @@
       </div>
       <div class="section">
         <h3>Schedules</h3>
-        <div class="hint">Add a <b>group</b> schedule, then a <b>master</b> schedule ~15 min later. The master run only aggregates a group run once all its reports are saved.</div>
+        <div class="hint">Pick a time for the <b>group run</b>. When all group reports finish, the <b>master report is generated automatically</b> — no separate master schedule needed.</div>
         <div class="controls">
-          <label>Agent
-            <select id="schType" class="date-field">
-              <option value="group">group agent</option>
-              <option value="master">master agent</option>
-            </select>
-          </label>
           <label>Time <input id="schTime" type="time" class="date-field" value="22:00"></label>
           <label>Label <input id="schLabel" class="date-field" placeholder="Nightly"></label>
           <label>Window

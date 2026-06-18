@@ -329,3 +329,7 @@ body {
 }
 
 .chip-master { color: var(--signal) !important; }
+
+/* v3.3: metrics cards above the rendered report body */
+.report-cards:not(:empty) { margin: 4px 0 16px; }
+.report-cards .metrics { margin: 0; }

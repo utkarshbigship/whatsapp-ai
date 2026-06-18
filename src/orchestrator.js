@@ -34,7 +34,14 @@ function windowForMode(mode) {
  * Generate group reports for a frozen snapshot of active groups, optionally then the master.
  * Returns the run id. Progress is tracked in report_runs.
  */
-async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartReuse = false, withMaster = false }) {
+async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartReuse = false, withMaster = false, contextReportIds = [] }) {
+  // Serialize batch-level runs: a group batch and a manual master must never overlap.
+  if (runlock.globalStatus().running) {
+    logger.warn('runBatch: another batch is already running — skipping this request.');
+    const latest = db.getLatestRun(null);
+    return latest ? latest.id : null;
+  }
+
   const hasExplicit = window && (window.from || window.fromDate || window.hours);
   const w = hasExplicit ? resolveWindow(window) : windowForMode((window && window.mode) || 'today-so-far');
   const from = w.from, cutoff = w.to, label = w.label;
@@ -52,7 +59,8 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
     window_from: from, window_to: cutoff, group_ids: groupIds,
   });
 
-  runlock.begin(clusterId);
+  runlock.beginGlobal();
+  runlock.begin(clusterId); // per-cluster, for the dashboard's status display
   try {
     let done = 0;
     const tasks = active.map((g) => async () => {
@@ -81,7 +89,7 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
     if (withMaster) {
       db.updateRun(runId, { phase: 'master', current_group: null });
       const r = await generateMasterReport({
-        clusterId, window: { from, to: cutoff, label }, groupIds, trigger,
+        clusterId, window: { from, to: cutoff, label }, groupIds, trigger, contextReportIds,
       });
       if (r) db.updateRun(runId, { master_report_id: r.reportId });
     }
@@ -91,39 +99,9 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
     db.updateRun(runId, { phase: 'error', status: 'error', error: e.message, finished_at: Math.floor(Date.now() / 1000) });
   } finally {
     runlock.end(clusterId);
+    runlock.endGlobal();
   }
   return runId;
 }
 
-/**
- * Master scheduler entry: aggregate the latest COMPLETE group run (verification gate).
- * Runs one master per cluster, restricted to that run's frozen group set.
- */
-async function runMasterFromLatestRun() {
-  // Verification gate: only aggregate when the MOST RECENT group run is complete.
-  // If it is still running (e.g. a large group batch is taking longer than the
-  // 15-min gap), skip this cycle rather than aggregate a stale earlier run.
-  const run = db.getLatestRun(null);
-  if (!run) { logger.info('Master schedule: no group run found.'); return; }
-  if (run.status !== 'complete') {
-    logger.info(`Master schedule: latest group run #${run.id} is "${run.status}" — skipping until it completes.`);
-    return;
-  }
-  const window = { from: run.window_from, to: run.window_to, label: run.window_label };
-  const clusters = db.listClusters();
-  for (const c of clusters) {
-    runlock.begin(c.id);
-    try {
-      const r = await generateMasterReport({
-        clusterId: c.id, window, groupIds: run.group_ids, trigger: 'schedule',
-      });
-      if (!r) logger.info(`Master schedule: nothing to aggregate for cluster "${c.id}".`);
-    } catch (e) {
-      logger.error(`Master schedule "${c.id}":`, e.message);
-    } finally {
-      runlock.end(c.id);
-    }
-  }
-}
-
-module.exports = { runBatch, runMasterFromLatestRun };
+module.exports = { runBatch };

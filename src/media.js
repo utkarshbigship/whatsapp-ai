@@ -15,6 +15,29 @@ function loadPrompt() {
   return fs.readFileSync(config.prompts.mediaExtract, 'utf8');
 }
 
+// Spreadsheet detection + local extraction (.csv / .xlsx / .xls) — cheaper and far more
+// accurate than sending a sheet through the vision model.
+function isSpreadsheet(media) {
+  const mt = (media.mimetype || '').toLowerCase();
+  const fn = (media.filename || '').toLowerCase();
+  return mt.includes('csv') || mt.includes('spreadsheet') || mt.includes('ms-excel') ||
+         /\.(csv|xlsx|xls)$/.test(fn);
+}
+
+function parseSpreadsheet(media) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(Buffer.from(media.data, 'base64'), { type: 'buffer' });
+  const parts = [];
+  for (const name of wb.SheetNames) {
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]).trim();
+    if (csv) parts.push(wb.SheetNames.length > 1 ? `# Sheet: ${name}\n${csv}` : csv);
+  }
+  let text = parts.join('\n\n');
+  const max = config.media.spreadsheetMaxChars || 20000;
+  if (text.length > max) text = text.slice(0, max) + '\n…[truncated]';
+  return text;
+}
+
 /**
  * Understand a downloaded WhatsApp media object via Gemini multimodal.
  * @param {{mimetype:string,data:string,filename?:string}} media  base64 data
@@ -28,6 +51,18 @@ async function understand(media, type) {
     const bytes = Buffer.byteLength(media.data, 'base64');
     if (bytes > config.media.maxBytes) {
       return `[${type}: too large to analyse (${Math.round(bytes / 1048576)}MB)]`;
+    }
+
+    // Spreadsheets: extract tabular text locally and fold it into the transcript.
+    if (type === 'document' && isSpreadsheet(media)) {
+      try {
+        const text = parseSpreadsheet(media);
+        const name = media.filename ? ` ${media.filename}` : '';
+        return text ? `[spreadsheet${name}]\n${text}` : `[spreadsheet${name}: empty]`;
+      } catch (e) {
+        logger.warn(`Spreadsheet parse failed (${media.filename || ''}): ${e.message}`);
+        // fall through to the multimodal path
+      }
     }
 
     // Normalise voice-note mimetype for Gemini.
