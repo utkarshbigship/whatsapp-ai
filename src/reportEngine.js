@@ -9,6 +9,11 @@ function istDateToEpoch(dateStr, time) {
   return Math.floor(new Date(`${dateStr}T${time}+05:30`).getTime() / 1000);
 }
 
+// Parse a datetime-local string "YYYY-MM-DDTHH:MM" (no zone) as IST.
+function istDateTimeToEpoch(s) {
+  return Math.floor(new Date(`${s}:00+05:30`).getTime() / 1000);
+}
+
 function istDateStr(d) {
   const ist = new Date(d.toLocaleString('en-US', { timeZone: config.analysis.timezone }));
   const yyyy = ist.getFullYear();
@@ -48,11 +53,10 @@ function resolveWindow(window = {}) {
   }
   const { fromDate, toDate, hours } = window;
   if (fromDate && toDate) {
-    return {
-      from: istDateToEpoch(fromDate, '00:00:00'),
-      to:   istDateToEpoch(toDate,   '23:59:59'),
-      label: `${fromDate} to ${toDate}`,
-    };
+    // datetime-local values contain a "T"; date-only values get expanded to full days.
+    const from = fromDate.includes('T') ? istDateTimeToEpoch(fromDate) : istDateToEpoch(fromDate, '00:00:00');
+    const to   = toDate.includes('T')   ? istDateTimeToEpoch(toDate)   : istDateToEpoch(toDate,   '23:59:59');
+    return { from, to, label: `${fromDate.replace('T', ' ')} to ${toDate.replace('T', ' ')}` };
   }
   const h  = hours || config.analysis.defaultWindowHours;
   const to = Math.floor(Date.now() / 1000);

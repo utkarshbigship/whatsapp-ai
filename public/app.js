@@ -24,7 +24,12 @@ function timeAgo(u){ const s=Math.floor(Date.now()/1000)-u; if(s<60)return'just 
 function clock(u){ return new Date(u*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
 function dt(u){ return new Date(u*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
-function istMidnight(dateStr){ return Math.floor(new Date(`${dateStr}T00:00:00+05:30`).getTime()/1000); }
+// datetime-local helpers (local clock, "YYYY-MM-DDTHH:MM")
+function pad(n){ return String(n).padStart(2,'0'); }
+function nowLocalDT(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function todayStartLocalDT(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`; }
+// Parse a date or datetime-local field value to an IST epoch (seconds).
+function istToEpoch(v){ if(!v) return 0; return Math.floor(new Date((v.includes('T')?`${v}:00`:`${v}T00:00:00`)+'+05:30').getTime()/1000); }
 
 // ---------- markdown renderer (no dependency) ----------
 const METRIC_LABELS = {
@@ -149,12 +154,18 @@ function renderReportsUI(container, reports, chips){
         <button class="dl-btn2 primary" data-act="doc" title="Download a clean Word document">⬇ Download Word</button>
       </div>
     </div>
+    <div class="report-cards"></div>
     <div class="report-card"><div class="md-report"></div></div>`;
   const sel = container.querySelector('.report-select');
   const body = container.querySelector('.md-report');
+  const cards = container.querySelector('.report-cards');
   const cur = () => reports[parseInt(sel.value, 10)] || reports[0];
   const draw = () => {
     const r = cur();
+    // Metrics summary cards from the stored counts (master + group reports).
+    let m = null;
+    if (r.metrics_json) { try { m = JSON.parse(r.metrics_json); } catch (_) {} }
+    cards.innerHTML = m ? renderMetrics(m, false) : '';
     body.innerHTML = renderMarkdown(r.report, { chips });
     body.querySelectorAll('.group-chip').forEach((a) =>
       a.addEventListener('click', (e) => { e.preventDefault(); setView('groups'); selectGroup(a.dataset.gid, a.dataset.gname); }));
@@ -256,7 +267,6 @@ function emptyDetail() {
 
 function selectGroup(id, name) {
   activeGroup = id; activeName = name; renderGroups();
-  const today = todayStr();
   const clusterOpts = clusters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   $('#detail').innerHTML = `
     <div class="detail-head">
@@ -266,8 +276,8 @@ function selectGroup(id, name) {
     <div class="section">
       <h3>Analyse</h3>
       <div class="controls">
-        <label>From <input type="date" id="fromDate" class="date-field" value="${today}"></label>
-        <label>To <input type="date" id="toDate" class="date-field" value="${today}"></label>
+        <label>From <input type="datetime-local" id="fromDate" class="date-field" value="${todayStartLocalDT()}"></label>
+        <label>To <input type="datetime-local" id="toDate" class="date-field" value="${nowLocalDT()}"></label>
         <label><input type="checkbox" id="last24" checked> last 24h (ignore dates)</label>
         <label><input type="checkbox" id="deliver"> send to WhatsApp</label>
         <button class="btn" id="runBtn">Analyse escalations</button>
@@ -288,14 +298,14 @@ function selectGroup(id, name) {
 
 async function loadReports(id) {
   try {
-    const { reports } = await api(`/api/groups/${encodeURIComponent(id)}/reports?limit=20`);
+    const { reports } = await api(`/api/groups/${encodeURIComponent(id)}/reports?days=7`);
     const picker = $('#contextPicker');
     if (picker) {
       let suggested = new Set();
       const fromEl = $('#fromDate');
       if (fromEl && fromEl.value && !$('#last24').checked) {
         try {
-          const beforeTs = istMidnight(fromEl.value);
+          const beforeTs = istToEpoch(fromEl.value);
           const s = await api(`/api/groups/${encodeURIComponent(id)}/context-suggestions?beforeTs=${beforeTs}&limit=2`);
           (s.suggestions || []).forEach((x) => suggested.add(x.id));
         } catch (_) {}
@@ -345,20 +355,23 @@ async function runAnalyse(id, name) {
 let masterInited = false;
 function initMasterView(){
   if (!masterInited) {
-    $('#mFromDate').value = todayStr(); $('#mToDate').value = todayStr();
+    $('#mFromDate').value = todayStartLocalDT(); $('#mToDate').value = nowLocalDT();
     $('#mRunBtn').addEventListener('click', runMasterAnalyse);
-    $('#mCluster').addEventListener('change', loadMasterReports);
+    $('#mCluster').addEventListener('change', () => { loadMasterReports(); loadMasterContextPicker(); });
+    $('#mFromDate').addEventListener('change', loadMasterContextPicker);
     masterInited = true;
   }
   $('#mCluster').innerHTML = clusters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-  loadMasterReports();
+  loadMasterReports(); loadMasterContextPicker();
 }
 function selectedCluster(){ return $('#mCluster').value || 'all'; }
+function clusterName(id){ const c = clusters.find((x) => x.id === id); return c ? c.name : id; }
 
 async function loadMasterReports(){
   try {
     const clusterId = selectedCluster();
-    const { reports, lock, newSince } = await api(`/api/master/reports?clusterId=${encodeURIComponent(clusterId)}&limit=20`);
+    const { reports, lock, newSince } = await api(`/api/master/reports?clusterId=${encodeURIComponent(clusterId)}&days=7`);
+    const head2 = $('#masterTitle'); if (head2) head2.textContent = `Master report — ${clusterName(clusterId)}`;
     const box = $('#masterReports');
     let head = '';
     if (newSince && newSince.messages > 0) {
@@ -370,11 +383,38 @@ async function loadMasterReports(){
   } catch (e) { $('#masterReports').innerHTML = `<div class="loading">${e.message}</div>`; }
 }
 
+// Prior master reports (last 7 days) the user can attach as context.
+async function loadMasterContextPicker(){
+  const picker = $('#mContextPicker'); if (!picker) return;
+  try {
+    const clusterId = selectedCluster();
+    const { reports } = await api(`/api/master/reports?clusterId=${encodeURIComponent(clusterId)}&days=7`);
+    let suggested = new Set();
+    const fromEl = $('#mFromDate');
+    if (fromEl && fromEl.value && !$('#mLast24').checked) {
+      try {
+        const beforeTs = istToEpoch(fromEl.value);
+        const s = await api(`/api/master/context-suggestions?clusterId=${encodeURIComponent(clusterId)}&beforeTs=${beforeTs}&limit=2`);
+        (s.suggestions || []).forEach((x) => suggested.add(x.id));
+      } catch (_) {}
+    }
+    picker.innerHTML = !reports.length ? '' :
+      '<div class="context-label">Attach previous master reports as context (suggested pre-checked):</div>' +
+      reports.map((r) => `
+        <label class="context-item">
+          <input type="checkbox" class="ctx" value="${r.id}" ${suggested.has(r.id)?'checked':''}>
+          <span>${dt(r.created_at)} · ${esc(r.window_label || '')}</span>
+        </label>`).join('');
+  } catch (_) { picker.innerHTML = ''; }
+}
+
 async function runMasterAnalyse(){
   const btn = $('#mRunBtn');
   const clusterId = selectedCluster();
   const body = { clusterId };
   if (!$('#mLast24').checked) { body.fromDate = $('#mFromDate').value; body.toDate = $('#mToDate').value; }
+  const ctxIds = Array.from(document.querySelectorAll('#mContextPicker .ctx:checked')).map((c) => parseInt(c.value, 10));
+  if (ctxIds.length) body.contextReportIds = ctxIds;
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Starting…';
   try {
     const res = await api('/api/master/analyse', { method:'POST', body: JSON.stringify(body) });
@@ -430,9 +470,9 @@ function initSettingsView(){
   };
   $('#schAddBtn').onclick = async () => {
     const time_hhmm = $('#schTime').value, label = $('#schLabel').value.trim();
-    const window_mode = $('#schWindow').value, type = $('#schType').value;
+    const window_mode = $('#schWindow').value;
     if (!time_hhmm) return toast('time required', true);
-    try { await api('/api/schedules', { method:'POST', body: JSON.stringify({ time_hhmm, label, window_mode, type, enabled: 1 }) });
+    try { await api('/api/schedules', { method:'POST', body: JSON.stringify({ time_hhmm, label, window_mode, enabled: 1 }) });
       $('#schLabel').value=''; loadSchedules(); toast('Schedule added.'); }
     catch (e) { toast(e.message, true); }
   };
@@ -469,9 +509,8 @@ async function loadSchedules(){
     if (!schedules.length) { box.innerHTML = '<div class="loading">No schedules. Add one above.</div>'; return; }
     box.innerHTML = schedules.map((s) => `
       <div class="row">
-        <span class="chip ${s.type==='master'?'chip-master':''}">${esc(s.type||'group')}</span>
-        <span class="chip">${esc(s.time_hhmm)}</span>
-        <span>${esc(s.label||'(no label)')} · ${esc(s.window_mode)}</span>
+        <span class="chip">⏰ ${esc(s.time_hhmm)}</span>
+        <span>${esc(s.label||'(no label)')} · ${esc(s.window_mode)} → auto master</span>
         <label><input type="checkbox" class="sch-en" data-id="${s.id}" ${s.enabled?'checked':''}> enabled</label>
         <button class="del-btn sch-del" data-id="${s.id}" title="Delete">×</button>
       </div>`).join('');

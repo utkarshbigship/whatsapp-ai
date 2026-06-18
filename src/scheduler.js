@@ -1,11 +1,10 @@
-// DB-driven scheduler. Two schedule types managed from the dashboard:
-//   - 'group'  : freezes active groups at fire time and generates their reports.
-//   - 'master' : aggregates the latest COMPLETE group run (run it ~15 min after the group one).
+// DB-driven scheduler. Each schedule fires a group run at the chosen time; when all
+// group reports finish, the run automatically generates the overall master report.
 const cron    = require('node-cron');
 const config  = require('../config');
 const logger  = require('./logger');
 const db      = require('./db');
-const { runBatch, runMasterFromLatestRun } = require('./orchestrator');
+const { runBatch } = require('./orchestrator');
 
 const tasks = new Map(); // scheduleId -> cron task
 
@@ -28,11 +27,10 @@ function reload() {
     const expr = cronFor(s.time_hhmm);
     if (!cron.validate(expr)) { logger.warn(`Invalid schedule time "${s.time_hhmm}" (id ${s.id})`); continue; }
     const task = cron.schedule(expr, () => {
-      logger.info(`Scheduler fired: ${s.type} "${s.label || s.time_hhmm}" (${s.window_mode})`);
-      const run = s.type === 'master'
-        ? runMasterFromLatestRun()
-        : runBatch({ window: { mode: s.window_mode }, trigger: 'schedule', smartReuse: false, withMaster: false });
-      Promise.resolve(run).catch((e) => logger.error('Scheduler run failed:', e.message));
+      logger.info(`Scheduler fired: group run "${s.label || s.time_hhmm}" (${s.window_mode}) → auto master`);
+      Promise.resolve(
+        runBatch({ clusterId: 'all', window: { mode: s.window_mode }, trigger: 'schedule', smartReuse: false, withMaster: true })
+      ).catch((e) => logger.error('Scheduler run failed:', e.message));
     }, { timezone: config.scheduler.timezone });
     tasks.set(s.id, task);
   }

@@ -19,6 +19,8 @@ function preflight() {
 async function main() {
   preflight();
   logger.info('Starting Escalation Analyst...');
+  const stale = db.failStaleRuns();
+  if (stale) logger.warn(`Marked ${stale} interrupted run(s) as error after restart.`);
   const client = whatsapp.init();
   server.start();
   require('./scheduler').start();

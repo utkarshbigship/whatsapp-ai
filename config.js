@@ -52,13 +52,14 @@ module.exports = {
   analysis: {
     defaultWindowHours: 24,
     timezone: 'Asia/Kolkata',
-    minMessages: 2,
+    minMessages: 1,
   },
 
   // Media understanding (done at ingestion, folded into transcript)
   media: {
     enabled: true,
     types: ['image', 'video', 'audio', 'ptt', 'document', 'sticker'],
+    spreadsheetMaxChars: 20000, // cap on extracted .csv/.xlsx text folded into the transcript
     maxBytes: 18 * 1024 * 1024,
     storeDir: path.join(__dirname, 'data', 'media'),
   },

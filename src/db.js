@@ -93,8 +93,10 @@ function ensureColumn(table, column, ddl) {
 ensureColumn('reports', 'scope',        `scope TEXT NOT NULL DEFAULT 'group'`);
 ensureColumn('reports', 'metrics_json', `metrics_json TEXT`);
 ensureColumn('reports', 'cluster_id',   `cluster_id TEXT`);
-ensureColumn('schedules', 'type',       `type TEXT NOT NULL DEFAULT 'group'`); // group | master
+ensureColumn('schedules', 'type',       `type TEXT NOT NULL DEFAULT 'group'`); // legacy; all schedules are group runs now
 db.exec(`CREATE INDEX IF NOT EXISTS idx_rep_scope ON reports(scope, period_start, period_end);`);
+// One-time: disable legacy standalone master schedules — group runs now auto-trigger the master.
+db.exec(`UPDATE schedules SET enabled = 0 WHERE type = 'master'`);
 
 // Seed the default cluster so unassigned groups always have a home.
 db.prepare(`INSERT OR IGNORE INTO clusters (id, name) VALUES ('all', 'All')`).run();
@@ -130,9 +132,16 @@ const stmtInsertReport = db.prepare(`
   INSERT INTO reports (group_id, group_name, report, message_count, window_label, period_start, period_end, model, trigger, scope, metrics_json, cluster_id)
   VALUES (@group_id, @group_name, @report, @message_count, @window_label, @period_start, @period_end, @model, @trigger, @scope, @metrics_json, @cluster_id)
 `);
-const stmtReportsForGroup = db.prepare(`
-  SELECT id, group_name, report, message_count, window_label, period_start, period_end, model, trigger, created_at
-  FROM reports WHERE group_id = @group_id ORDER BY created_at DESC LIMIT @limit
+const groupReportCols = `id, group_name, report, metrics_json, message_count, window_label, period_start, period_end, model, trigger, created_at`;
+const stmtReportsForGroupSince = db.prepare(`
+  SELECT ${groupReportCols}
+  FROM reports WHERE group_id = @group_id AND scope = 'group' AND created_at >= @cutoff
+  ORDER BY created_at DESC LIMIT @limit
+`);
+const stmtReportsForGroupAny = db.prepare(`
+  SELECT ${groupReportCols}
+  FROM reports WHERE group_id = @group_id AND scope = 'group'
+  ORDER BY created_at DESC LIMIT @limit
 `);
 const stmtDeleteMsgs    = db.prepare(`DELETE FROM messages WHERE group_id = @group_id`);
 const stmtDeleteReports = db.prepare(`DELETE FROM reports  WHERE group_id = @group_id`);
@@ -150,9 +159,15 @@ const stmtGroupReportsForWindow = db.prepare(`
   GROUP BY group_id
   ORDER BY group_name ASC
 `);
-const stmtMasterReports = db.prepare(`
-  SELECT id, group_id, group_name, report, message_count, window_label,
-         period_start, period_end, model, trigger, metrics_json, cluster_id, created_at
+const masterReportCols = `id, group_id, group_name, report, message_count, window_label,
+         period_start, period_end, model, trigger, metrics_json, cluster_id, created_at`;
+const stmtMasterReportsSince = db.prepare(`
+  SELECT ${masterReportCols}
+  FROM reports WHERE scope = 'master' AND cluster_id = @cluster_id AND created_at >= @cutoff
+  ORDER BY created_at DESC LIMIT @limit
+`);
+const stmtMasterReportsAny = db.prepare(`
+  SELECT ${masterReportCols}
   FROM reports WHERE scope = 'master' AND cluster_id = @cluster_id
   ORDER BY created_at DESC LIMIT @limit
 `);
@@ -225,8 +240,16 @@ const stmtLatestRunForCluster = db.prepare(`
 const stmtLatestCompleteRun = db.prepare(`
   SELECT * FROM report_runs WHERE status = 'complete' ORDER BY window_to DESC, id DESC LIMIT 1
 `);
+const stmtFailStaleRuns = db.prepare(`
+  UPDATE report_runs SET status = 'error', phase = 'error',
+    error = 'Interrupted by restart', finished_at = strftime('%s','now')
+  WHERE status = 'running'
+`);
 
 module.exports = {
+  // Mark any run still flagged 'running' as errored (called on startup after a restart).
+  failStaleRuns() { return stmtFailStaleRuns.run().changes; },
+
   insertMessage(msg) { return stmtInsertMsg.run(msg).lastInsertRowid; },
   updateMessageBody(id, body) { stmtUpdateBody.run({ id, body }); },
 
@@ -239,7 +262,14 @@ module.exports = {
   insertReport(row) {
     return stmtInsertReport.run({ scope: 'group', metrics_json: null, cluster_id: null, ...row });
   },
-  getReportsForGroup(groupId, limit) { return stmtReportsForGroup.all({ group_id: groupId, limit }); },
+  // opts: number (legacy limit) or { days=7, limit=200 }. Returns last `days` days,
+  // falling back to the most-recent `limit` when that window is empty.
+  getReportsForGroup(groupId, opts) {
+    const { days = 7, limit = 200 } = typeof opts === 'number' ? { limit: opts } : (opts || {});
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows = stmtReportsForGroupSince.all({ group_id: groupId, cutoff, limit });
+    return rows.length ? rows : stmtReportsForGroupAny.all({ group_id: groupId, limit });
+  },
   getReportsByIds(ids) {
     if (!Array.isArray(ids) || !ids.length) return [];
     const clean = ids.map((n) => parseInt(n, 10)).filter((n) => Number.isInteger(n));
@@ -258,7 +288,12 @@ module.exports = {
     const set = new Set(groupIds);
     return rows.filter((r) => set.has(r.group_id));
   },
-  getMasterReports(clusterId, limit) { return stmtMasterReports.all({ cluster_id: clusterId, limit }); },
+  getMasterReports(clusterId, opts) {
+    const { days = 7, limit = 200 } = typeof opts === 'number' ? { limit: opts } : (opts || {});
+    const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const rows = stmtMasterReportsSince.all({ cluster_id: clusterId, cutoff, limit });
+    return rows.length ? rows : stmtMasterReportsAny.all({ cluster_id: clusterId, limit });
+  },
   getReportsBeforeForGroup(groupId, beforeTs, limit) {
     return stmtReportsBeforeForGroup.all({ group_id: groupId, beforeTs, limit });
   },
