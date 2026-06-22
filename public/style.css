@@ -153,12 +153,6 @@ body {
 
 .loading { padding: 24px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
 
-@media (max-width: 760px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
-  .sidebar.mobile-open { display: block; position: absolute; inset: 56px 0 0 0; z-index: 5; }
-}
-
 /* ---- v3 additions: login, delete, date range ---- */
 .login-overlay {
   position: fixed; inset: 0; background: var(--ink);
@@ -166,7 +160,7 @@ body {
 }
 .login-card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-  padding: 32px; width: 320px; display: flex; flex-direction: column; gap: 12px;
+  padding: 32px; width: 320px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; gap: 12px;
 }
 .login-card h1 { font-size: 18px; font-weight: 600; }
 .login-sub { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
@@ -181,6 +175,14 @@ body {
   padding: 7px 12px; border-radius: 7px; font-size: 12px; cursor: pointer; margin-left: 12px;
 }
 .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+/* back-to-list button: hidden on desktop, shown on mobile inside the detail header */
+.back-btn {
+  display: none; background: transparent; border: 1px solid var(--line); color: var(--muted);
+  padding: 7px 11px; border-radius: 7px; font-size: 13px; cursor: pointer;
+  margin-right: 12px; align-items: center; gap: 4px;
+}
+.back-btn:hover { color: var(--text); border-color: var(--muted); }
 
 .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .date-field {
@@ -333,3 +335,50 @@ body {
 /* v3.3: metrics cards above the rendered report body */
 .report-cards:not(:empty) { margin: 4px 0 16px; }
 .report-cards .metrics { margin: 0; }
+
+/* password show/hide toggle */
+.pass-wrap { position: relative; display: flex; }
+.pass-wrap input { flex: 1; padding-right: 44px; }
+.pass-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  padding: 6px 8px; line-height: 0; border-radius: 6px;
+  display: inline-flex; align-items: center;
+}
+.pass-toggle:hover { color: var(--text); }
+.pass-toggle .icon-eye-off { display: none; }
+.pass-toggle.revealed .icon-eye { display: none; }
+.pass-toggle.revealed .icon-eye-off { display: inline; }
+
+/* ---- mobile (kept last so these reliably override the desktop rules above) ---- */
+@media (max-width: 760px) {
+  /* topbar: compact single row that fits a phone (drop the wordmark, keep nav) */
+  .topbar { gap: 8px; padding: 0 12px; }
+  .brand { display: none; }
+  .view-toggle { gap: 6px; margin-left: 0; }
+  .btn-ghost { margin-left: 0; padding: 8px 12px; }
+  .status { gap: 0; }
+  #statusText { display: none; }            /* keep the live dot, drop the label */
+  #logout { margin-left: 4px; }
+
+  /* groups: list and detail become full-screen panes you swap between */
+  #groupsView { grid-template-columns: 1fr; }
+  #groupsView .sidebar { display: block; border-right: none; }
+  #groupsView #detail { display: none; }
+  #groupsView.show-detail .sidebar { display: none; }
+  #groupsView.show-detail #detail { display: block; }
+  .back-btn { display: inline-flex; }
+
+  /* tighter spacing + stacked form controls so nothing is cramped or clipped */
+  .detail-head { padding: 14px 16px; flex-wrap: wrap; }
+  .detail-head h2 { font-size: 16px; }
+  .section { padding: 16px; }
+  .controls { gap: 8px; }
+  .controls label { width: 100%; font-size: 12px; }
+  .controls label > input:not([type="checkbox"]),
+  .controls label > select { display: block; width: 100%; margin-top: 4px; }
+  .controls .btn { width: 100%; justify-content: center; }
+  .date-field, .report-select { width: 100%; }
+  .report-select { min-width: 0; }
+  .msg .a { width: 96px; }
+}
