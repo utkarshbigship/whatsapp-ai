@@ -346,9 +346,11 @@ body {
   display: inline-flex; align-items: center;
 }
 .pass-toggle:hover { color: var(--text); }
-.pass-toggle .icon-eye-off { display: none; }
-.pass-toggle.revealed .icon-eye { display: none; }
-.pass-toggle.revealed .icon-eye-off { display: inline; }
+/* hidden state (default): crossed-out eye; revealed state: open eye */
+.pass-toggle .icon-eye { display: none; }
+.pass-toggle .icon-eye-off { display: inline; }
+.pass-toggle.revealed .icon-eye { display: inline; }
+.pass-toggle.revealed .icon-eye-off { display: none; }
 
 /* ---- mobile (kept last so these reliably override the desktop rules above) ---- */
 @media (max-width: 760px) {
