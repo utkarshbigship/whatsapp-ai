@@ -9,6 +9,9 @@ was missed, panic/critical flags, abuse/legal flags, and carry-over.
 > No structured DB extraction, no RAG. All the analytical logic lives in one
 > editable system prompt: `prompts/escalation-analyst.md`.
 
+> **Deploying to a server (domain + HTTPS)?** See [`DEPLOY.md`](DEPLOY.md) for the full
+> Linux VM runbook (nginx, PM2, Let's Encrypt, updates without losing messages).
+
 ## Important: what the numbers mean
 The counts in the report ("50 in, 40 responded, 10 missed") are the **model's
 best reading of a noisy chat, not audited figures.** They're reliable enough for

@@ -24,11 +24,12 @@ function requireAuth(req, res, next) {
 function start() {
   if (!config.dashboard.enabled) { logger.info('Dashboard disabled.'); return; }
   const app = express();
+  app.set('trust proxy', 1); // honour X-Forwarded-Proto from nginx for secure cookies
   app.use(express.json());
   app.use(session({
     secret: config.dashboard.sessionSecret,
     resave: false, saveUninitialized: false,
-    cookie: { httpOnly: true, maxAge: 12 * 3600 * 1000 },
+    cookie: { httpOnly: true, sameSite: 'lax', secure: config.dashboard.cookieSecure, maxAge: 12 * 3600 * 1000 },
   }));
 
   // ---- auth ----
@@ -48,8 +49,19 @@ function start() {
 
   // ---- data ----
   app.get('/api/groups', requireAuth, (req, res) => {
-    try { res.json({ groups: db.getKnownGroups(tzTodayStart()) }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
+    try {
+      const groups = db.getKnownGroups(tzTodayStart());
+      // Include groups that have reports but no recent messages (e.g. after a long
+      // disconnect or message purge) so their reports stay reachable in the dashboard.
+      const seen = new Set(groups.map((g) => g.group_id));
+      for (const r of db.getGroupsWithReports()) {
+        if (!seen.has(r.group_id)) {
+          groups.push({ group_id: r.group_id, group_name: r.group_name,
+            total_messages: 0, today_messages: 0, last_message_ts: r.last_report_at });
+        }
+      }
+      res.json({ groups });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   app.get('/api/groups/:id/messages', requireAuth, (req, res) => {
@@ -210,8 +222,8 @@ function start() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  app.listen(config.dashboard.port, () =>
-    logger.info(`Dashboard on http://localhost:${config.dashboard.port} (login: ${config.dashboard.user})`));
+  app.listen(config.dashboard.port, config.dashboard.host, () =>
+    logger.info(`Dashboard on http://${config.dashboard.host}:${config.dashboard.port} (login: ${config.dashboard.user})`));
 }
 
 module.exports = { start };

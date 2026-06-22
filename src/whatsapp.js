@@ -50,7 +50,11 @@ function init() {
   client.on('qr', (qr) => { logger.info('Scan QR with the bot WhatsApp account:'); qrcode.generate(qr, { small: true }); });
   client.on('authenticated', () => logger.info('Authenticated. Session saved.'));
   client.on('auth_failure', (m) => logger.error('Auth failure:', m, '— delete .wwebjs_auth and re-scan.'));
-  client.on('ready', () => { isReady = true; logger.info('WhatsApp client is READY.'); });
+  client.on('ready', async () => {
+    isReady = true;
+    logger.info('WhatsApp client is READY.');
+    await backfillRecent().catch((e) => logger.warn('Backfill failed:', e.message));
+  });
   client.on('disconnected', (reason) => {
     isReady = false;
     logger.warn('Disconnected:', reason, `— reconnecting in ${config.whatsapp.reconnectDelaySeconds}s`);
@@ -67,45 +71,77 @@ function init() {
       if (!shouldTrack(groupId, groupName)) return;
 
       if (await handleCommand(msg, groupId, groupName)) return;
-
-      let authorName = msg._data?.notifyName || null;
-      if (!authorName) {
-        try { const c = await msg.getContact(); authorName = c.pushname || c.name || c.number || null; } catch (_) {}
-      }
-
-      const isMedia = !!msg.hasMedia;
-      const baseBody = msg.body || '';
-
-      // Insert immediately (raw), so nothing is lost. Media gets enriched async.
-      const id = db.insertMessage({
-        group_id: groupId, group_name: groupName,
-        author: msg.author || null, author_name: authorName,
-        body: isMedia ? (baseBody ? baseBody + ' [media analysing…]' : '[media analysing…]') : baseBody,
-        msg_type: msg.type, has_media: isMedia ? 1 : 0, timestamp: msg.timestamp,
-      });
-      logger.debug(`[${groupName}] ${authorName || msg.author}: ${(baseBody || '['+msg.type+']').slice(0,60)}`);
-
-      // Enrich media in the background (does not block the handler).
-      if (isMedia && config.media.enabled && config.media.types.includes(msg.type)) {
-        (async () => {
-          try {
-            const m = await msg.downloadMedia();
-            const desc = await media.understand(m, msg.type);
-            const body = baseBody ? `${baseBody} ${desc}` : desc;
-            db.updateMessageBody(id, body);
-            logger.debug(`[${groupName}] media enriched: ${desc.slice(0, 80)}`);
-          } catch (e) {
-            logger.warn(`Media enrich failed: ${e.message}`);
-            db.updateMessageBody(id, baseBody ? `${baseBody} [${msg.type}]` : `[${msg.type}]`);
-          }
-        })();
-      }
+      await persistMessage(msg, groupId, groupName);
     } catch (err) {
       logger.error('Error handling message:', err.message);
     }
   });
 
   return client;
+}
+
+// Store one message (idempotent via wa_id) and enrich media in the background.
+async function persistMessage(msg, groupId, groupName) {
+  let authorName = msg._data?.notifyName || null;
+  if (!authorName) {
+    try { const c = await msg.getContact(); authorName = c.pushname || c.name || c.number || null; } catch (_) {}
+  }
+  const isMedia = !!msg.hasMedia;
+  const baseBody = msg.body || '';
+  const { id, inserted } = db.insertMessageInfo({
+    group_id: groupId, group_name: groupName,
+    author: msg.author || null, author_name: authorName,
+    body: isMedia ? (baseBody ? baseBody + ' [media analysing…]' : '[media analysing…]') : baseBody,
+    msg_type: msg.type, has_media: isMedia ? 1 : 0, timestamp: msg.timestamp,
+    wa_id: msg.id?._serialized || null,
+  });
+  if (!inserted) return false; // duplicate (already stored) — skip enrichment
+  logger.debug(`[${groupName}] ${authorName || msg.author}: ${(baseBody || '['+msg.type+']').slice(0,60)}`);
+
+  if (isMedia && config.media.enabled && config.media.types.includes(msg.type)) {
+    (async () => {
+      try {
+        const m = await msg.downloadMedia();
+        const desc = await media.understand(m, msg.type);
+        db.updateMessageBody(id, baseBody ? `${baseBody} ${desc}` : desc);
+        logger.debug(`[${groupName}] media enriched: ${desc.slice(0, 80)}`);
+      } catch (e) {
+        logger.warn(`Media enrich failed: ${e.message}`);
+        db.updateMessageBody(id, baseBody ? `${baseBody} [${msg.type}]` : `[${msg.type}]`);
+      }
+    })();
+  }
+  return true;
+}
+
+// On (re)connect, pull recent messages per tracked group to recover any gap left by a
+// restart/disconnect. Idempotent: dedup on wa_id + a per-group timestamp cursor.
+async function backfillRecent() {
+  const limit = config.whatsapp.backfillLimit;
+  if (!limit || limit < 1) return;
+  let chats;
+  try { chats = await client.getChats(); } catch (e) { logger.warn('Backfill getChats failed:', e.message); return; }
+  let added = 0, groupsTouched = 0;
+  for (const chat of chats) {
+    const groupId = chat.id?._serialized || '';
+    if (!groupId.endsWith('@g.us')) continue;
+    const groupName = chat.name || groupId;
+    if (!shouldTrack(groupId, groupName)) continue;
+    try {
+      const cursor = db.getLastMessageTs(groupId); // only consider messages newer than what we have
+      const msgs = await chat.fetchMessages({ limit });
+      let groupAdded = 0;
+      for (const m of msgs) {
+        if (cursor && m.timestamp <= cursor) continue;
+        if (await persistMessage(m, groupId, groupName)) { added++; groupAdded++; }
+      }
+      if (groupAdded) groupsTouched++;
+    } catch (e) {
+      logger.warn(`Backfill "${groupName}" failed: ${e.message}`);
+    }
+  }
+  if (added) logger.info(`Backfill: recovered ${added} message(s) across ${groupsTouched} group(s).`);
+  else logger.info('Backfill: no missed messages.');
 }
 
 async function sendText(to, text) {
