@@ -183,13 +183,33 @@ function renderReportsUI(container, reports, chips){
 function showLogin(){ $('#login').style.display='flex'; $('#app').style.display='none'; }
 function showApp(){ $('#login').style.display='none'; $('#app').style.display='block'; loadGroups(); loadClusters(); }
 
+// show/hide password
+$('#togglePass').addEventListener('click', () => {
+  const inp = $('#password'), btn = $('#togglePass');
+  const reveal = inp.type === 'password';
+  inp.type = reveal ? 'text' : 'password';
+  btn.classList.toggle('revealed', reveal);
+  btn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+  inp.focus();
+});
+
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  const errEl = $('#loginErr');
+  errEl.textContent = '';
+  // Use a direct fetch (not api()) so the 401 isn't swallowed by the generic handler.
   try {
-    await api('/api/login', { method:'POST', body: JSON.stringify({
-      username: $('#username').value, password: $('#password').value }) });
-    $('#loginErr').textContent = ''; showApp();
-  } catch (err) { $('#loginErr').textContent = err.message; }
+    const res = await fetch('/api/login', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('#username').value, password: $('#password').value }),
+    });
+    if (res.ok) { errEl.textContent = ''; showApp(); return; }
+    if (res.status === 401) errEl.textContent = 'Incorrect username or password';
+    else { const b = await res.json().catch(() => ({})); errEl.textContent = b.error || `Error ${res.status}`; }
+  } catch (_) {
+    errEl.textContent = 'Network error — please try again';
+  }
 });
 $('#logout').addEventListener('click', async () => {
   await api('/api/logout', { method:'POST' }).catch(()=>{}); showLogin();
@@ -204,6 +224,7 @@ function setView(v){
   $('#groupsView').style.display = v==='groups' ? '' : 'none';
   $('#masterView').style.display = v==='master' ? 'block' : 'none';
   $('#settingsView').style.display = v==='settings' ? 'block' : 'none';
+  if (v==='groups') $('#groupsView').classList.remove('show-detail'); // mobile: land on the list
   if (v==='master') initMasterView();
   if (v==='settings') initSettingsView();
 }
@@ -270,6 +291,7 @@ function selectGroup(id, name) {
   const clusterOpts = clusters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   $('#detail').innerHTML = `
     <div class="detail-head">
+      <button class="back-btn" id="backToList">← Groups</button>
       <div><h2>${esc(name)}</h2><div class="sub">${esc(id)}</div></div>
       <label class="cluster-pick">Cluster <select id="grpCluster" class="date-field">${clusterOpts}</select></label>
     </div>
@@ -287,6 +309,9 @@ function selectGroup(id, name) {
     <div class="section"><h3>Reports</h3><div id="reports"><div class="loading">Loading…</div></div></div>
     <div class="section"><h3>Recent messages</h3><div id="messages"><div class="loading">Loading…</div></div></div>`;
   $('#runBtn').addEventListener('click', () => runAnalyse(id, name));
+  // mobile: swap from the group list to this detail pane, with a way back
+  $('#groupsView').classList.add('show-detail');
+  $('#backToList').addEventListener('click', () => $('#groupsView').classList.remove('show-detail'));
   $('#fromDate').addEventListener('change', () => loadReports(id));
   $('#grpCluster').addEventListener('change', async (e) => {
     try { await api(`/api/groups/${encodeURIComponent(id)}/cluster`, { method:'POST',
