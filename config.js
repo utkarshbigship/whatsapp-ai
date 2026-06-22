@@ -75,10 +75,12 @@ module.exports = {
 
   dashboard: {
     enabled: true,
+    host: process.env.DASHBOARD_HOST || '127.0.0.1', // bind localhost; expose via nginx
     port: parseInt(process.env.DASHBOARD_PORT || '8080', 10),
     user: process.env.DASH_USER || 'admin',
     pass: process.env.DASH_PASS || 'change-me',
     sessionSecret: process.env.DASH_SECRET || 'dev-secret-change-me',
+    cookieSecure: process.env.COOKIE_SECURE === 'true', // set true once HTTPS is live
   },
 
   retention: {
@@ -86,7 +88,12 @@ module.exports = {
     purgeReportsAfterDays: 0,   // 0 = keep reports forever (the durable artifact)
   },
 
-  whatsapp: { reconnectDelaySeconds: 30 },
+  whatsapp: {
+    reconnectDelaySeconds: 30,
+    // On (re)connect, pull this many recent messages per group to recover any gap
+    // created by a restart/disconnect. 0 disables backfill.
+    backfillLimit: parseInt(process.env.WA_BACKFILL_LIMIT || '50', 10),
+  },
 
   logLevel: process.env.LOG_LEVEL || 'info',
 };

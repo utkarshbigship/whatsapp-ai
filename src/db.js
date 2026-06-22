@@ -94,7 +94,10 @@ ensureColumn('reports', 'scope',        `scope TEXT NOT NULL DEFAULT 'group'`);
 ensureColumn('reports', 'metrics_json', `metrics_json TEXT`);
 ensureColumn('reports', 'cluster_id',   `cluster_id TEXT`);
 ensureColumn('schedules', 'type',       `type TEXT NOT NULL DEFAULT 'group'`); // legacy; all schedules are group runs now
+ensureColumn('messages',  'wa_id',      `wa_id TEXT`); // WhatsApp message id, for idempotent backfill
 db.exec(`CREATE INDEX IF NOT EXISTS idx_rep_scope ON reports(scope, period_start, period_end);`);
+// Unique on wa_id so live capture and reconnect-backfill never double-insert (NULLs allowed for old rows).
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_waid ON messages(wa_id) WHERE wa_id IS NOT NULL;`);
 // One-time: disable legacy standalone master schedules — group runs now auto-trigger the master.
 db.exec(`UPDATE schedules SET enabled = 0 WHERE type = 'master'`);
 
@@ -102,10 +105,16 @@ db.exec(`UPDATE schedules SET enabled = 0 WHERE type = 'master'`);
 db.prepare(`INSERT OR IGNORE INTO clusters (id, name) VALUES ('all', 'All')`).run();
 
 const stmtInsertMsg = db.prepare(`
-  INSERT INTO messages (group_id, group_name, author, author_name, body, msg_type, has_media, timestamp)
-  VALUES (@group_id, @group_name, @author, @author_name, @body, @msg_type, @has_media, @timestamp)
+  INSERT OR IGNORE INTO messages (group_id, group_name, author, author_name, body, msg_type, has_media, timestamp, wa_id)
+  VALUES (@group_id, @group_name, @author, @author_name, @body, @msg_type, @has_media, @timestamp, @wa_id)
 `);
 const stmtUpdateBody = db.prepare(`UPDATE messages SET body = @body WHERE id = @id`);
+const stmtLastMessageTs = db.prepare(`SELECT MAX(timestamp) AS ts FROM messages WHERE group_id = @group_id`);
+// Groups that have a stored group report (so they remain selectable even with no recent messages).
+const stmtGroupsWithReports = db.prepare(`
+  SELECT group_id, MAX(group_name) AS group_name, MAX(created_at) AS last_report_at
+  FROM reports WHERE scope = 'group' GROUP BY group_id
+`);
 
 const stmtMessagesRange = db.prepare(`
   SELECT author, author_name, body, msg_type, timestamp
@@ -250,8 +259,20 @@ module.exports = {
   // Mark any run still flagged 'running' as errored (called on startup after a restart).
   failStaleRuns() { return stmtFailStaleRuns.run().changes; },
 
-  insertMessage(msg) { return stmtInsertMsg.run(msg).lastInsertRowid; },
+  insertMessageInfo(msg) {
+    const info = stmtInsertMsg.run({
+      group_id: msg.group_id, group_name: msg.group_name ?? null,
+      author: msg.author ?? null, author_name: msg.author_name ?? null,
+      body: msg.body ?? null, msg_type: msg.msg_type ?? null,
+      has_media: msg.has_media ?? 0, timestamp: msg.timestamp,
+      wa_id: msg.wa_id ?? null,
+    });
+    return { id: info.lastInsertRowid, inserted: info.changes > 0 };
+  },
+  insertMessage(msg) { return this.insertMessageInfo(msg).id; },
   updateMessageBody(id, body) { stmtUpdateBody.run({ id, body }); },
+  getLastMessageTs(groupId) { return stmtLastMessageTs.get({ group_id: groupId }).ts || 0; },
+  getGroupsWithReports() { return stmtGroupsWithReports.all(); },
 
   getMessagesInRange(groupId, from, to) {
     return stmtMessagesRange.all({ group_id: groupId, from, to });
