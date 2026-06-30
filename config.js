@@ -12,21 +12,27 @@ module.exports = {
 
   recipient: process.env.RECIPIENT_NUMBER,
 
-  // Gemini — model + thinking are env-driven, change anytime
+  // Gemini — now used ONLY for media conversion (image/voice/pdf → text). Cheap & sufficient.
   gemini: {
-    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
-    thinkingLevel: process.env.GEMINI_THINKING || 'high', // minimal|low|medium|high
+    mediaModel: process.env.GEMINI_MEDIA_MODEL || 'gemini-3.1-flash-lite',
     retries: 3,
     maxTranscriptChars: 800000,
   },
 
+  // DeepSeek — drives the escalation reasoning (group + master reports). OpenAI-compatible API.
+  deepseek: {
+    baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+    model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
+    // Reasoning depth. First-party native values: high | max (xhigh maps to max). Max everywhere.
+    reasoningEffort: process.env.DEEPSEEK_REASONING || 'max',
+    retries: 3,
+  },
+
   // Multi-agent run settings
   agents: {
-    // How many group-agent Gemini calls run in parallel during a scheduled/master run.
-    // Tune to your Gemini tier's rate limit — raise it as your quota allows.
+    // How many group-agent report calls run in parallel during a scheduled/master run.
+    // Tune to your provider's rate limit — raise it as your quota allows.
     groupConcurrency: parseInt(process.env.GROUP_AGENT_CONCURRENCY || '4', 10),
-    // Thinking level used for scheduled group reports (cheaper than the on-demand default).
-    scheduledThinkingLevel: process.env.GROUP_THINKING || 'medium',
   },
 
   // Master (cross-group) aggregation

@@ -26,8 +26,10 @@ Each group arrives as a block:
 Each group report contains:
 1. An **escalation table** — one row per escalation with columns: Time, Seller, AWB,
    Mile (First/Last), Category/Subcategory, Priority, Staff response
-   (meaningful/formality/none), Seller follow-ups, Staff responses, Closed,
-   Time to close, Terminal reached (picked/delivered).
+   (meaningful/formality/none), Seller follow-ups, Staff responses, Status
+   (open / promised_not_done / claimed_unconfirmed / verified_closed), Time to close,
+   Terminal reached (picked/delivered). Note: a promise or an unconfirmed POC claim is
+   NOT a real close.
 2. A **machine counts JSON block** with that group's totals.
 3. A short **qualitative flags** tail (frustration, critical, abuse/legal,
    inefficient POC).
@@ -67,10 +69,16 @@ the groups driving each.
 
 **Critical roll-up** — the escalations needing action now, each tagged to its group.
 
+**Broken promises & fake closures** — groups with the most **promised_not_done** (POC
+promised, never delivered) and **claimed_closed_unconfirmed** (POC marked done, seller
+never confirmed). Call these out sharply with group tags — they are hidden open
+escalations masquerading as resolved.
+
 **Abuse / legal roll-up** — quote/cite each, tagged to its group. "None" if none.
 
-**POC / team systemic issues** — POCs or groups with repeated formality/neglect across
-the window, tagged.
+**Staff responsiveness & engagement** — across groups, which POCs/teams are slowest to
+first meaningful response, most formality-only, or leave seller follow-ups unanswered.
+Tag the groups driving the worst responsiveness.
 
 **Carry-over** — still-open cross-group items aged forward (use the prior master report
 if provided).

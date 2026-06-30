@@ -71,7 +71,7 @@ async function understand(media, type) {
 
     const ai = await getClient();
     const response = await ai.models.generateContent({
-      model: config.gemini.model,
+      model: config.gemini.mediaModel,
       contents: [
         { inlineData: { mimeType, data: media.data } },
         { text: `Media type: ${type}. Describe per instructions.` },
