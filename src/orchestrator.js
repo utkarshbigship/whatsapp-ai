@@ -78,7 +78,7 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
         await generateReport({
           groupId: g.group_id, groupName: g.group_name,
           window: { from, to: cutoff, label },
-          trigger, thinkingLevel: config.agents.scheduledThinkingLevel,
+          trigger, // reports always run at max reasoning (config.deepseek.reasoningEffort)
         }).catch((e) => logger.error(`Run group ${g.group_name}: ${e.message}`));
       }
       done += 1;

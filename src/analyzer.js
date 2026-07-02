@@ -5,8 +5,8 @@ const logger = require('./logger');
 let aiClient = null;
 async function getClient() {
   if (!aiClient) {
-    const { GoogleGenAI } = await import('@google/genai');
-    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const OpenAI = require('openai'); // DeepSeek is OpenAI-compatible
+    aiClient = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: config.deepseek.baseUrl });
   }
   return aiClient;
 }
@@ -33,35 +33,39 @@ function buildTranscript(messages) {
   return t;
 }
 
-/** Shared Gemini call with retry/backoff. Returns trimmed text or null. */
-async function generate({ systemInstruction, userContent, thinkingLevel }) {
+/**
+ * Shared DeepSeek call with retry/backoff. Returns trimmed text or null.
+ * Reasoning depth defaults to config.deepseek.reasoningEffort (max) for every report.
+ */
+async function generate({ systemInstruction, userContent, reasoningEffort }) {
   const ai = await getClient();
   let lastErr;
-  for (let attempt = 1; attempt <= config.gemini.retries; attempt++) {
+  for (let attempt = 1; attempt <= config.deepseek.retries; attempt++) {
     try {
-      const response = await ai.models.generateContent({
-        model: config.gemini.model,
-        contents: userContent,
-        config: {
-          systemInstruction,
-          thinkingConfig: { thinkingLevel: thinkingLevel || config.gemini.thinkingLevel },
-        },
+      const response = await ai.chat.completions.create({
+        model: config.deepseek.model,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: userContent },
+        ],
+        reasoning_effort: reasoningEffort || config.deepseek.reasoningEffort,
       });
-      const text = (response.text || '').trim();
+      const text = (response?.choices?.[0]?.message?.content || '').trim();
       if (text) return text;
       lastErr = new Error('Empty response');
     } catch (err) {
       lastErr = err;
-      logger.warn(`Gemini attempt ${attempt}/${config.gemini.retries}: ${err.message}`);
+      logger.warn(`DeepSeek attempt ${attempt}/${config.deepseek.retries}: ${err.message}`);
       await new Promise((r) => setTimeout(r, attempt * 2000));
     }
   }
-  logger.error('Gemini generate failed:', lastErr?.message);
+  logger.error('DeepSeek generate failed:', lastErr?.message);
   return null;
 }
 
 const METRIC_KEYS = [
-  'raised', 'closed', 'pending', 'responded_meaningful', 'formality_only', 'missed',
+  'raised', 'closed', 'verified_closed', 'claimed_closed_unconfirmed', 'promised_not_done', 'pending',
+  'responded_meaningful', 'formality_only', 'missed',
   'high_panic', 'critical', 'abuse_legal', 'follow_ups_seller', 'staff_responses_to_followups',
   'first_mile', 'last_mile', 'avg_hours_to_close', 'avg_days_to_close',
   'best_case_count', 'worst_case_count',
@@ -130,7 +134,8 @@ async function analyze({ groupName, messages, windowLabel, priorReports = [], th
     priorBlock +
     `Transcript:\n"""\n${transcript}\n"""`;
 
-  return generate({ systemInstruction, userContent, thinkingLevel });
+  // thinkingLevel is accepted for backward-compat but reports always run at max reasoning.
+  return generate({ systemInstruction, userContent });
 }
 
 /** Build the master user message for one cluster's group reports (or batch digests). */

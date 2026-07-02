@@ -33,7 +33,9 @@ function istToEpoch(v){ if(!v) return 0; return Math.floor(new Date((v.includes(
 
 // ---------- markdown renderer (no dependency) ----------
 const METRIC_LABELS = {
-  raised:'Escalations raised', closed:'Closed', pending:'Pending',
+  raised:'Escalations raised', closed:'Closed (verified)',
+  verified_closed:'Verified closed', claimed_closed_unconfirmed:'Claimed closed (unconfirmed)',
+  promised_not_done:'Promised, not done', pending:'Pending',
   responded_meaningful:'Responded meaningfully', formality_only:'Formality only',
   missed:'No response / missed', high_panic:'High-panic (3+ follow-ups)',
   critical:'Critical', abuse_legal:'Abuse / legal',

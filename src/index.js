@@ -9,11 +9,13 @@ const { generateReport, formatForDelivery } = require('./reportEngine');
 function preflight() {
   const p = [];
   if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.includes('your_'))
-    p.push('GEMINI_API_KEY missing/placeholder in .env');
+    p.push('GEMINI_API_KEY missing/placeholder in .env (used for media conversion)');
+  if (!process.env.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY.includes('your_'))
+    p.push('DEEPSEEK_API_KEY missing/placeholder in .env (used for report reasoning)');
   if (config.command.enabled && (!config.recipient || config.recipient.includes('X')))
     logger.warn('RECIPIENT_NUMBER not set — !analyse command delivery will fail.');
   if (p.length) { p.forEach((x) => logger.error('CONFIG: ' + x)); process.exit(1); }
-  logger.info(`Model: ${config.gemini.model} | thinking: ${config.gemini.thinkingLevel}`);
+  logger.info(`Reasoning: ${config.deepseek.model} (${config.deepseek.reasoningEffort}) | Media: ${config.gemini.mediaModel}`);
 }
 
 async function main() {

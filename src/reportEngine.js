@@ -88,7 +88,7 @@ async function generateReport({ groupId, groupName, window, contextReportIds, tr
     group_id: groupId, group_name: groupName, report,
     message_count: messages.length, window_label: label,
     period_start: from, period_end: to,
-    model: config.gemini.model, trigger,
+    model: config.deepseek.model, trigger,
     scope: 'group', metrics_json: metrics ? JSON.stringify(metrics) : null,
   });
 
@@ -96,7 +96,8 @@ async function generateReport({ groupId, groupName, window, contextReportIds, tr
 }
 
 const INT_KEYS = [
-  'raised', 'closed', 'pending', 'responded_meaningful', 'formality_only', 'missed',
+  'raised', 'closed', 'verified_closed', 'claimed_closed_unconfirmed', 'promised_not_done', 'pending',
+  'responded_meaningful', 'formality_only', 'missed',
   'high_panic', 'critical', 'abuse_legal', 'follow_ups_seller', 'staff_responses_to_followups',
   'first_mile', 'last_mile', 'best_case_count', 'worst_case_count',
 ];
@@ -120,7 +121,9 @@ function sumMetrics(list) {
 }
 
 const LABELS = {
-  raised: 'Escalations raised', closed: 'Closed', pending: 'Pending',
+  raised: 'Escalations raised', closed: 'Closed (verified)',
+  verified_closed: 'Verified closed', claimed_closed_unconfirmed: 'Claimed closed (unconfirmed)',
+  promised_not_done: 'Promised, not done', pending: 'Pending',
   responded_meaningful: 'Responded meaningfully', formality_only: 'Formality only',
   missed: 'No response / missed', high_panic: 'High-panic (3+ follow-ups)',
   critical: 'Critical', abuse_legal: 'Abuse / legal',
@@ -193,7 +196,7 @@ async function generateMasterReport({ clusterId = 'all', window, contextReportId
     group_name: clusterId === 'all' ? 'All Groups (Master)' : `Master — ${clusterId}`,
     report, message_count: messageCount, window_label: label,
     period_start: from, period_end: to,
-    model: config.gemini.model, trigger,
+    model: config.deepseek.model, trigger,
     scope: 'master', cluster_id: clusterId,
     metrics_json: JSON.stringify({ ...totals, group_count: groupReports.length }),
   });
