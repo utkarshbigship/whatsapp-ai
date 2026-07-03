@@ -25,6 +25,10 @@ module.exports = {
     model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
     // Reasoning depth. First-party native values: high | max (xhigh maps to max). Max everywhere.
     reasoningEffort: process.env.DEEPSEEK_REASONING || 'max',
+    // Output cap. Must be generous: at max reasoning, reasoning tokens share this budget, and a
+    // full escalation table + AWB journeys + the final JSON block can be long. Too low = the report
+    // is truncated before the JSON, which zeroes all metrics. Lower only if the API rejects it.
+    maxOutputTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '32000', 10),
     retries: 3,
   },
 
