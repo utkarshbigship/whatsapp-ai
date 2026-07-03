@@ -78,25 +78,46 @@ function start() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // analyse on demand. body: { groupName, fromDate?, toDate?, hours?, deliver? }
-  app.post('/api/groups/:id/analyse', requireAuth, async (req, res) => {
-    try {
-      const groupId   = req.params.id;
-      const groupName = req.body?.groupName || groupId;
-      const window = {
-        fromDate: req.body?.fromDate, toDate: req.body?.toDate, hours: req.body?.hours,
-      };
-      const contextReportIds = req.body?.contextReportIds || [];
-      const result = await generateReport({ groupId, groupName, window, contextReportIds, trigger: 'dashboard' });
-      if (!result) return res.status(422).json({ error: 'Not enough messages in that window.' });
+  // On-demand analysis runs in the BACKGROUND (max-reasoning can take minutes; a synchronous
+  // request would 504 at the nginx timeout). The dashboard polls /analyse/status.
+  const analyseJobs = new Map(); // groupId -> { status:'running'|'done'|'empty'|'error', ... }
 
-      let delivered = false;
-      if (req.body?.deliver && whatsapp.isReady()) {
-        await whatsapp.sendText(config.recipient, formatForDelivery(groupName, result));
-        delivered = true;
+  // analyse on demand. body: { groupName, fromDate?, toDate?, hours?, deliver?, contextReportIds? }
+  app.post('/api/groups/:id/analyse', requireAuth, (req, res) => {
+    const groupId = req.params.id;
+    const running = analyseJobs.get(groupId);
+    if (running && running.status === 'running') {
+      return res.status(202).json({ status: 'in_progress', startedAt: running.startedAt });
+    }
+    const groupName = req.body?.groupName || groupId;
+    const window = { fromDate: req.body?.fromDate, toDate: req.body?.toDate, hours: req.body?.hours };
+    const contextReportIds = req.body?.contextReportIds || [];
+    const deliver = !!req.body?.deliver;
+
+    analyseJobs.set(groupId, { status: 'running', startedAt: Date.now() });
+    res.json({ status: 'started' });
+
+    // Fire-and-forget; the report is saved to the DB on completion regardless of the HTTP request.
+    (async () => {
+      try {
+        const result = await generateReport({ groupId, groupName, window, contextReportIds, trigger: 'dashboard' });
+        if (!result) { analyseJobs.set(groupId, { status: 'empty', finishedAt: Date.now() }); return; }
+        let delivered = false;
+        if (deliver && whatsapp.isReady()) {
+          await whatsapp.sendText(config.recipient, formatForDelivery(groupName, result)).catch(() => {});
+          delivered = true;
+        }
+        analyseJobs.set(groupId, { status: 'done', finishedAt: Date.now(), delivered });
+      } catch (e) {
+        logger.error(`analyse ${groupName}: ${e.message}`);
+        analyseJobs.set(groupId, { status: 'error', error: e.message, finishedAt: Date.now() });
       }
-      res.json({ ...result, delivered });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    })();
+  });
+
+  // Poll the status of the background analysis for a group.
+  app.get('/api/groups/:id/analyse/status', requireAuth, (req, res) => {
+    res.json(analyseJobs.get(req.params.id) || { status: 'idle' });
   });
 
   app.delete('/api/groups/:id', requireAuth, (req, res) => {

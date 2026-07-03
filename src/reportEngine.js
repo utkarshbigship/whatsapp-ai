@@ -84,6 +84,10 @@ async function generateReport({ groupId, groupName, window, contextReportIds, tr
   if (!report) return null;
 
   const metrics = parseMetrics(report);
+  if (!metrics) {
+    logger.warn(`No machine-counts JSON parsed for "${groupName}" — metrics will be blank ` +
+      `(report may be truncated; check DEEPSEEK_MAX_TOKENS). Report length: ${report.length} chars.`);
+  }
   db.insertReport({
     group_id: groupId, group_name: groupName, report,
     message_count: messages.length, window_label: label,

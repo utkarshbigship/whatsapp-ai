@@ -49,8 +49,15 @@ async function generate({ systemInstruction, userContent, reasoningEffort }) {
           { role: 'user', content: userContent },
         ],
         reasoning_effort: reasoningEffort || config.deepseek.reasoningEffort,
+        max_tokens: config.deepseek.maxOutputTokens,
       });
-      const text = (response?.choices?.[0]?.message?.content || '').trim();
+      const choice = response?.choices?.[0];
+      const text = (choice?.message?.content || '').trim();
+      // A 'length' finish means the model was cut off — the trailing JSON counts block is
+      // likely missing, which silently zeroes all metrics. Surface it loudly.
+      if (choice?.finish_reason === 'length') {
+        logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS.`);
+      }
       if (text) return text;
       lastErr = new Error('Empty response');
     } catch (err) {

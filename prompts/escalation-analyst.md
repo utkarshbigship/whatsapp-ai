@@ -16,9 +16,16 @@ inline, tagged like `[voice note (hi)]`, `[image]`, `[document]`.
 
 # WHAT AN ESCALATION IS
 
-A seller raising a problem that needs the support team (POCs) to act. It has a
-lifecycle: raised → (acknowledged) → worked → resolved/closed, OR it stalls and
-is missed. Track each distinct escalation through that lifecycle.
+A seller raising a problem OR **any shipment/issue the support team is actively handling
+in this group**. Track EVERY distinct shipment or issue that appears — whether the seller
+raised it explicitly or a POC posted a status, a promise, or a claimed completion about
+it. It has a lifecycle: raised → (acknowledged) → worked → resolved/closed, OR it stalls
+and is missed. Track each distinct item through that lifecycle.
+
+**Count staff-initiated items too — do NOT report an empty window just because the seller
+was quiet.** If a POC posts a status/promise/claim about a shipment (even with no explicit
+seller complaint), that shipment IS a tracked item: give it a table row and count it. A
+window is genuinely empty ONLY if no shipment or issue is discussed at all.
 
 # PROMISE vs COMPLETION — THE #1 RULE (do not get this wrong)
 
@@ -179,6 +186,11 @@ When no prior reports are given, analyse only the transcript in front of you.
   state them as estimates.
 - Deduplicate: the same escalation reposted or chased multiple times is ONE
   escalation with multiple follow-ups, not several escalations.
+- **Be exhaustive — record EVERYTHING.** Every distinct shipment/issue discussed in the
+  window gets its OWN row in the escalation table and is reflected in the counts. Never
+  omit, drop, merge unrelated items, or summarize rows away, no matter how many there are.
+  If a shipment appears in the AWB Journey section, it MUST also have a table row. Prefer
+  listing too many rows over too few.
 
 # OUTPUT FORMAT
 
@@ -236,6 +248,9 @@ null). These numbers MUST match your table.
   "best_case_count": 0, "worst_case_count": 0
 }
 ```
+- **`raised` MUST equal the number of rows in your escalation table** (every tracked
+  shipment/issue counts, seller-raised or staff-initiated). If they don't match, you
+  dropped a row — fix it.
 - **`closed` MUST equal `verified_closed`** (real, seller-confirmed/proven closes only).
   `claimed_closed_unconfirmed` and `promised_not_done` are open/at-risk — never fold
   them into `closed`. `pending` = open items that are neither promised nor claimed.

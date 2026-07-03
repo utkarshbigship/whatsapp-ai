@@ -93,10 +93,13 @@ function renderMarkdown(text, opts = {}){
       }
       out += `<pre class="md-pre">${esc(content)}</pre>`; continue;
     }
-    if (/^\s*\|.*\|\s*$/.test(line) && i+1 < lines.length &&
-        /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i+1]) && lines[i+1].includes('-')){
+    // Table = a header row with pipes followed by a |---|--- separator. Be lenient when
+    // collecting rows: accept any non-blank line containing a pipe, so a row that lost an
+    // outer pipe or drifted in spacing doesn't halt collection and silently drop later rows.
+    if (line.includes('|') && line.trim() && i+1 < lines.length &&
+        /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i+1]) && lines[i+1].includes('-') && lines[i+1].includes('|')){
       const buf = [line]; i++;
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])){ buf.push(lines[i]); i++; }
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')){ buf.push(lines[i]); i++; }
       out += renderTable(buf, chips); continue;
     }
     const hd = line.match(/^(#{1,4})\s+(.*)$/);
@@ -289,6 +292,7 @@ function emptyDetail() {
 }
 
 function selectGroup(id, name) {
+  if (analyseTimer) { clearInterval(analyseTimer); analyseTimer = null; } // stop any poll from a prior group
   activeGroup = id; activeName = name; renderGroups();
   const clusterOpts = clusters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   $('#detail').innerHTML = `
@@ -361,6 +365,7 @@ async function loadMessages(id) {
   } catch (e) { $('#messages').innerHTML = `<div class="loading">${e.message}</div>`; }
 }
 
+let analyseTimer = null;
 async function runAnalyse(id, name) {
   const btn = $('#runBtn');
   const last24 = $('#last24').checked;
@@ -368,14 +373,26 @@ async function runAnalyse(id, name) {
   if (!last24) { body.fromDate = $('#fromDate').value; body.toDate = $('#toDate').value; }
   const ctxIds = Array.from(document.querySelectorAll('.ctx:checked')).map((c) => parseInt(c.value, 10));
   if (ctxIds.length) body.contextReportIds = ctxIds;
+  const ctxNote = ctxIds.length ? ` (with ${ctxIds.length} prior report${ctxIds.length>1?'s':''} as context)` : '';
+  const done = () => { btn.disabled = false; btn.textContent = 'Analyse escalations'; };
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analysing…';
   try {
-    const res = await api(`/api/groups/${encodeURIComponent(id)}/analyse`, { method:'POST', body: JSON.stringify(body) });
-    const ctxNote = ctxIds.length ? ` (with ${ctxIds.length} prior report${ctxIds.length>1?'s':''} as context)` : '';
-    toast((res.delivered ? 'Report generated and sent to WhatsApp' : 'Report generated') + ctxNote + '.');
-    loadReports(id);
-  } catch (e) { toast(e.message, true); }
-  finally { btn.disabled = false; btn.textContent = 'Analyse escalations'; }
+    // Background job — returns immediately, then we poll (max reasoning can take minutes).
+    await api(`/api/groups/${encodeURIComponent(id)}/analyse`, { method:'POST', body: JSON.stringify(body) });
+    toast('Analysing… max-reasoning can take a minute or two.');
+    if (analyseTimer) clearInterval(analyseTimer);
+    analyseTimer = setInterval(async () => {
+      let s;
+      try { s = await api(`/api/groups/${encodeURIComponent(id)}/analyse/status`); }
+      catch (_) { return; } // transient — keep polling
+      if (s.status === 'running') return;
+      clearInterval(analyseTimer); analyseTimer = null; done();
+      if (s.status === 'done') { toast((s.delivered ? 'Report generated and sent to WhatsApp' : 'Report generated') + ctxNote + '.'); loadReports(id); }
+      else if (s.status === 'empty') toast('Not enough messages in that window.', true);
+      else if (s.status === 'error') toast(s.error || 'Analysis failed.', true);
+      else loadReports(id);
+    }, 3000);
+  } catch (e) { toast(e.message, true); done(); }
 }
 
 // ---------- master view ----------
