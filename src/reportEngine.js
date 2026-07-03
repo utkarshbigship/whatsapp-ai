@@ -67,7 +67,7 @@ function resolveWindow(window = {}) {
  * Generate and store an escalation report for one group.
  * @returns {Promise<{report, messageCount, windowLabel, metrics}|null>}
  */
-async function generateReport({ groupId, groupName, window, contextReportIds, trigger = 'manual', thinkingLevel }) {
+async function generateReport({ groupId, groupName, window, contextReportIds, trigger = 'manual' }) {
   const { from, to, label } = resolveWindow(window || {});
   const messages = db.getMessagesInRange(groupId, from, to);
   if (messages.length < config.analysis.minMessages) return null;
@@ -80,7 +80,7 @@ async function generateReport({ groupId, groupName, window, contextReportIds, tr
     }));
   }
 
-  const report = await analyze({ groupName, messages, windowLabel: label, priorReports, thinkingLevel });
+  const report = await analyze({ groupName, messages, windowLabel: label, priorReports });
   if (!report) return null;
 
   const metrics = parseMetrics(report);

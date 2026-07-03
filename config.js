@@ -16,19 +16,23 @@ module.exports = {
   gemini: {
     mediaModel: process.env.GEMINI_MEDIA_MODEL || 'gemini-3.1-flash-lite',
     retries: 3,
-    maxTranscriptChars: 800000,
   },
 
   // DeepSeek — drives the escalation reasoning (group + master reports). OpenAI-compatible API.
   deepseek: {
     baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
-    // Reasoning depth. First-party native values: high | max (xhigh maps to max). Max everywhere.
-    reasoningEffort: process.env.DEEPSEEK_REASONING || 'max',
-    // Output cap. Must be generous: at max reasoning, reasoning tokens share this budget, and a
-    // full escalation table + AWB journeys + the final JSON block can be long. Too low = the report
-    // is truncated before the JSON, which zeroes all metrics. Lower only if the API rejects it.
-    maxOutputTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '32000', 10),
+    // Reasoning depth. Native values: high | max. 'high' is strong for extraction while leaving
+    // budget for the full report — 'max' spends almost the whole token budget on hidden reasoning,
+    // truncating the output (blank metrics) and taking ~10min. Use 'max' only if you accept that.
+    reasoningEffort: process.env.DEEPSEEK_REASONING || 'high',
+    // Output cap. Reasoning tokens share this budget, and a full table + AWB journeys + JSON can be
+    // long. Too low = report truncated before the JSON block, which zeroes all metrics.
+    maxOutputTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '40000', 10),
+    // Per-request timeout (ms). Prevents the SDK's 10-min default from hanging a job.
+    timeoutMs: parseInt(process.env.DEEPSEEK_TIMEOUT_MS || '150000', 10),
+    // Transcript cap (chars). DeepSeek V4 has a 1M-token context; this keeps input bounded.
+    maxTranscriptChars: parseInt(process.env.DEEPSEEK_MAX_TRANSCRIPT_CHARS || '600000', 10),
     retries: 3,
   },
 

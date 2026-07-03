@@ -194,47 +194,15 @@ When no prior reports are given, analyse only the transcript in front of you.
 
 # OUTPUT FORMAT
 
-Be **data-first**. The bulk of your output is the escalation table and the machine
-counts. Keep prose to the short qualitative tail only — this report is consumed by a
-master aggregator, so clean structured data matters more than narrative.
+Be **data-first**. Emit the machine-counts JSON **FIRST** (so it is never lost even if the
+report is long), then the escalation table, then the AWB journeys, then the short qualitative
+tail. This report is consumed by a master aggregator, so clean structured data matters more
+than narrative.
 
-## 1. Escalation table (one row per distinct, deduped escalation)
+## 1. Machine counts (REQUIRED — emit this FIRST, before anything else)
 
-A Markdown table with EXACTLY these columns:
-
-| Time | Seller | AWB | Mile | Category/Subcategory | Priority | Staff response | Seller follow-ups | Staff responses | Status | Time to close | Terminal reached |
-|------|--------|-----|------|----------------------|----------|----------------|-------------------|-----------------|--------|---------------|------------------|
-
-- **Mile** ∈ {First, Last, —}
-- **Priority** ∈ {normal, high, critical}
-- **Staff response** ∈ {meaningful, formality, none}
-- **Seller follow-ups** / **Staff responses**: integers
-- **Status** ∈ {open, promised_not_done, claimed_unconfirmed, verified_closed}
-- **Time to close**: e.g. `3h`, `2d` (only for verified_closed), else `—`
-- **Terminal reached**: {picked, delivered, no, —}
-
-## 2. AWB journey (one block per distinct AWB / shipment id seen)
-
-For each AWB / order id mentioned, trace its journey through the window:
-- **AWB / order id** and the seller it belongs to.
-- **Mile & stage**: First Mile (awaiting pickup → picked) or Last Mile (in transit →
-  delivered); state the latest stage reached.
-- **Latest status — PROMISED or CONFIRMED** (apply the #1 rule): e.g. "POC promised
-  pickup by shaam → promised_not_done" vs "seller confirmed delivered → verified".
-- **Terminal reached?** picked / delivered / no.
-- **Bigship staff engagement on this AWB**: which POC(s) engaged; response quality
-  (meaningful / formality / none); **responsiveness** — time from the seller first
-  raising it to the first MEANINGFUL staff reply, and how quickly staff answered each
-  follow-up (or didn't); and whether staff made promises they did not keep.
-
-Keep each AWB to a few tight lines. If an escalation has no identifiable AWB/order id,
-skip it here (it still appears in the table).
-
-## 3. Machine counts (REQUIRED — the very last thing in your output)
-
-After everything else, emit EXACTLY ONE fenced code block tagged `json` containing a
-single flat JSON object with these integer keys (0 if none; `avg_*` may be a number or
-null). These numbers MUST match your table.
+Emit EXACTLY ONE fenced code block tagged `json` containing a single flat JSON object with these
+integer keys (0 if none; `avg_*` may be a number or null). These numbers MUST match the table below.
 
 ```json
 {
@@ -258,6 +226,38 @@ null). These numbers MUST match your table.
   abuse, terminal reached). `worst_case_count` = critical, abusive/legal, long-open, or
   broken promises (promised_not_done).
 - Emit only these keys, valid JSON, no comments, no trailing commas.
+
+## 2. Escalation table (one row per distinct, deduped escalation)
+
+A Markdown table with EXACTLY these columns:
+
+| Time | Seller | AWB | Mile | Category/Subcategory | Priority | Staff response | Seller follow-ups | Staff responses | Status | Time to close | Terminal reached |
+|------|--------|-----|------|----------------------|----------|----------------|-------------------|-----------------|--------|---------------|------------------|
+
+- **Mile** ∈ {First, Last, —}
+- **Priority** ∈ {normal, high, critical}
+- **Staff response** ∈ {meaningful, formality, none}
+- **Seller follow-ups** / **Staff responses**: integers
+- **Status** ∈ {open, promised_not_done, claimed_unconfirmed, verified_closed}
+- **Time to close**: e.g. `3h`, `2d` (only for verified_closed), else `—`
+- **Terminal reached**: {picked, delivered, no, —}
+
+## 3. AWB journey (one block per distinct AWB / shipment id seen)
+
+For each AWB / order id mentioned, trace its journey through the window:
+- **AWB / order id** and the seller it belongs to.
+- **Mile & stage**: First Mile (awaiting pickup → picked) or Last Mile (in transit →
+  delivered); state the latest stage reached.
+- **Latest status — PROMISED or CONFIRMED** (apply the #1 rule): e.g. "POC promised
+  pickup by shaam → promised_not_done" vs "seller confirmed delivered → verified".
+- **Terminal reached?** picked / delivered / no.
+- **Bigship staff engagement on this AWB**: which POC(s) engaged; response quality
+  (meaningful / formality / none); **responsiveness** — time from the seller first
+  raising it to the first MEANINGFUL staff reply, and how quickly staff answered each
+  follow-up (or didn't); and whether staff made promises they did not keep.
+
+Keep each AWB to a few tight lines. If an escalation has no identifiable AWB/order id,
+skip it here (it still appears in the table).
 
 ## 4. Qualitative flags (brief — a few tight lines each, only if present)
 
