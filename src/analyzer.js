@@ -6,7 +6,12 @@ let aiClient = null;
 async function getClient() {
   if (!aiClient) {
     const OpenAI = require('openai'); // DeepSeek is OpenAI-compatible
-    aiClient = new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: config.deepseek.baseUrl });
+    aiClient = new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: config.deepseek.baseUrl,
+      timeout: config.deepseek.timeoutMs, // avoid the SDK's 10-min default hanging a job
+      maxRetries: 0,                      // we run our own retry loop below
+    });
   }
   return aiClient;
 }
@@ -27,8 +32,8 @@ function buildTranscript(messages) {
     return `[${time}] ${who}: ${text}`;
   }).join('\n');
 
-  if (t.length > config.gemini.maxTranscriptChars) {
-    t = '...(earlier messages trimmed)...\n' + t.slice(-config.gemini.maxTranscriptChars);
+  if (t.length > config.deepseek.maxTranscriptChars) {
+    t = '...(earlier messages trimmed)...\n' + t.slice(-config.deepseek.maxTranscriptChars);
   }
   return t;
 }
@@ -56,18 +61,19 @@ async function generate({ systemInstruction, userContent, reasoningEffort }) {
       // A 'length' finish means the model was cut off — the trailing JSON counts block is
       // likely missing, which silently zeroes all metrics. Surface it loudly.
       if (choice?.finish_reason === 'length') {
-        logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS.`);
+        logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS or lower DEEPSEEK_REASONING.`);
       }
       if (text) return text;
       lastErr = new Error('Empty response');
     } catch (err) {
       lastErr = err;
       logger.warn(`DeepSeek attempt ${attempt}/${config.deepseek.retries}: ${err.message}`);
-      await new Promise((r) => setTimeout(r, attempt * 2000));
     }
+    if (attempt < config.deepseek.retries) await new Promise((r) => setTimeout(r, attempt * 2000));
   }
+  // Throw (don't return null) so callers can distinguish a generation FAILURE from an empty window.
   logger.error('DeepSeek generate failed:', lastErr?.message);
-  return null;
+  throw new Error(`DeepSeek generation failed: ${lastErr?.message || 'unknown error'}`);
 }
 
 const METRIC_KEYS = [
@@ -118,7 +124,7 @@ function parseMetrics(text) {
  * Produce an escalation report for a group's messages.
  * @returns {Promise<string|null>}
  */
-async function analyze({ groupName, messages, windowLabel, priorReports = [], thinkingLevel }) {
+async function analyze({ groupName, messages, windowLabel, priorReports = [] }) {
   if (!messages || messages.length < config.analysis.minMessages) return null;
 
   const systemInstruction = loadPrompt(config.prompts.analyst);
@@ -141,7 +147,6 @@ async function analyze({ groupName, messages, windowLabel, priorReports = [], th
     priorBlock +
     `Transcript:\n"""\n${transcript}\n"""`;
 
-  // thinkingLevel is accepted for backward-compat but reports always run at max reasoning.
   return generate({ systemInstruction, userContent });
 }
 
@@ -201,11 +206,15 @@ async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [
     let digests = [];
     for (let i = 0; i < batches.length; i++) {
       const note = `BATCH ${i + 1}/${batches.length} — produce a partial digest. PRESERVE every {{G:...}} token verbatim.`;
-      const d = await generate({
-        systemInstruction,
-        userContent: masterUser(windowLabel, batches[i].join('\n'), [], note),
-      });
-      if (d) digests.push(`### BATCH DIGEST ${i + 1}\n${d}`);
+      try {
+        const d = await generate({
+          systemInstruction,
+          userContent: masterUser(windowLabel, batches[i].join('\n'), [], note),
+        });
+        if (d) digests.push(`### BATCH DIGEST ${i + 1}\n${d}`);
+      } catch (e) {
+        logger.warn(`Master batch ${i + 1}/${batches.length} failed, skipping its groups: ${e.message}`);
+      }
     }
     // Guard: if digests themselves overflow, keep the highest-signal head under cap.
     combinedInput = digests.join('\n\n');
@@ -215,10 +224,16 @@ async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [
     }
   }
 
-  return generate({
-    systemInstruction,
-    userContent: masterUser(windowLabel, combinedInput, priorMasterReports),
-  });
+  try {
+    return await generate({
+      systemInstruction,
+      userContent: masterUser(windowLabel, combinedInput, priorMasterReports),
+    });
+  } catch (e) {
+    // Master is best-effort — a failure returns null so the batch completes gracefully.
+    logger.error(`Master aggregate failed: ${e.message}`);
+    return null;
+  }
 }
 
 module.exports = { analyze, analyzeMaster, parseMetrics };

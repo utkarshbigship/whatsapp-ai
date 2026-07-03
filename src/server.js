@@ -26,7 +26,14 @@ function start() {
   const app = express();
   app.set('trust proxy', 1); // honour X-Forwarded-Proto from nginx for secure cookies
   app.use(express.json());
+
+  // SQLite-backed sessions so logins survive restarts (the default MemoryStore leaks and
+  // logs everyone out on every restart).
+  const SqliteStore = require('better-sqlite3-session-store')(session);
+  const Database = require('better-sqlite3');
+  const sessionDb = new Database(path.join(__dirname, '..', 'data', 'sessions.db'));
   app.use(session({
+    store: new SqliteStore({ client: sessionDb, expired: { clear: true, intervalMs: 15 * 60 * 1000 } }),
     secret: config.dashboard.sessionSecret,
     resave: false, saveUninitialized: false,
     cookie: { httpOnly: true, sameSite: 'lax', secure: config.dashboard.cookieSecure, maxAge: 12 * 3600 * 1000 },
@@ -78,9 +85,18 @@ function start() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // On-demand analysis runs in the BACKGROUND (max-reasoning can take minutes; a synchronous
-  // request would 504 at the nginx timeout). The dashboard polls /analyse/status.
+  // On-demand analysis runs in the BACKGROUND (a synchronous request would 504 on a slow model).
+  // The dashboard polls /analyse/status. Terminal entries self-clean after a TTL.
   const analyseJobs = new Map(); // groupId -> { status:'running'|'done'|'empty'|'error', ... }
+  const JOB_TTL_MS = 10 * 60 * 1000;
+  function finishJob(groupId, payload) {
+    analyseJobs.set(groupId, { ...payload, finishedAt: Date.now() });
+    const t = setTimeout(() => {
+      const j = analyseJobs.get(groupId);
+      if (j && j.status !== 'running') analyseJobs.delete(groupId);
+    }, JOB_TTL_MS);
+    if (t.unref) t.unref();
+  }
 
   // analyse on demand. body: { groupName, fromDate?, toDate?, hours?, deliver?, contextReportIds? }
   app.post('/api/groups/:id/analyse', requireAuth, (req, res) => {
@@ -100,17 +116,18 @@ function start() {
     // Fire-and-forget; the report is saved to the DB on completion regardless of the HTTP request.
     (async () => {
       try {
+        // generateReport returns null ONLY for a too-empty window; a model failure throws.
         const result = await generateReport({ groupId, groupName, window, contextReportIds, trigger: 'dashboard' });
-        if (!result) { analyseJobs.set(groupId, { status: 'empty', finishedAt: Date.now() }); return; }
+        if (!result) { finishJob(groupId, { status: 'empty' }); return; }
         let delivered = false;
         if (deliver && whatsapp.isReady()) {
-          await whatsapp.sendText(config.recipient, formatForDelivery(groupName, result)).catch(() => {});
-          delivered = true;
+          try { await whatsapp.sendText(config.recipient, formatForDelivery(groupName, result)); delivered = true; }
+          catch (e) { logger.warn(`WhatsApp delivery failed for ${groupName}: ${e.message}`); }
         }
-        analyseJobs.set(groupId, { status: 'done', finishedAt: Date.now(), delivered });
+        finishJob(groupId, { status: 'done', delivered });
       } catch (e) {
         logger.error(`analyse ${groupName}: ${e.message}`);
-        analyseJobs.set(groupId, { status: 'error', error: e.message, finishedAt: Date.now() });
+        finishJob(groupId, { status: 'error', error: e.message });
       }
     })();
   });

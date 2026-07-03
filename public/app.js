@@ -325,6 +325,7 @@ function selectGroup(id, name) {
       toast('Cluster updated.'); } catch (err) { toast(err.message, true); }
   });
   loadReports(id); loadMessages(id);
+  resumeAnalyseIfRunning(id); // if an analysis for this group is already running, show spinner + poll
 }
 
 async function loadReports(id) {
@@ -366,34 +367,63 @@ async function loadMessages(id) {
 }
 
 let analyseTimer = null;
+let analysingGroup = null; // group id currently being analysed (survives navigation)
+
+function setRunBtn(busy) {
+  const btn = $('#runBtn'); if (!btn) return;
+  btn.disabled = busy;
+  btn.innerHTML = busy ? '<span class="spinner"></span> Analysing…' : 'Analyse escalations';
+}
+
+// Poll the background analysis for `id` until it finishes; then update the UI (if still viewing it).
+function pollAnalyse(id, ctxNote = '') {
+  if (analyseTimer) clearInterval(analyseTimer);
+  analysingGroup = id;
+  if (activeGroup === id) setRunBtn(true);
+  analyseTimer = setInterval(async () => {
+    let s;
+    try { s = await api(`/api/groups/${encodeURIComponent(id)}/analyse/status`); }
+    catch (_) { return; } // transient (e.g. auth blip) — keep polling
+    if (s.status === 'running') return;
+    clearInterval(analyseTimer); analyseTimer = null; analysingGroup = null;
+    if (activeGroup === id) setRunBtn(false); // only touch the UI if still on this group
+    if (activeGroup !== id) return;           // finished while user is elsewhere; they'll see it on return
+    if (s.status === 'done') { toast((s.delivered ? 'Report generated and sent to WhatsApp' : 'Report generated') + ctxNote + '.'); loadReports(id); }
+    else if (s.status === 'empty') toast('Not enough messages in that window.', true);
+    else if (s.status === 'error') toast(s.error || 'Analysis failed.', true);
+    else { toast('Analysis was interrupted (server restarted) — please retry.', true); loadReports(id); } // idle
+  }, 3000);
+}
+
 async function runAnalyse(id, name) {
-  const btn = $('#runBtn');
   const last24 = $('#last24').checked;
   const body = { groupName: name, deliver: $('#deliver').checked };
   if (!last24) { body.fromDate = $('#fromDate').value; body.toDate = $('#toDate').value; }
   const ctxIds = Array.from(document.querySelectorAll('.ctx:checked')).map((c) => parseInt(c.value, 10));
   if (ctxIds.length) body.contextReportIds = ctxIds;
   const ctxNote = ctxIds.length ? ` (with ${ctxIds.length} prior report${ctxIds.length>1?'s':''} as context)` : '';
-  const done = () => { btn.disabled = false; btn.textContent = 'Analyse escalations'; };
-  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Analysing…';
+  setRunBtn(true);
   try {
-    // Background job — returns immediately, then we poll (max reasoning can take minutes).
+    // Background job — returns immediately, then we poll (a report can take a minute or two).
     await api(`/api/groups/${encodeURIComponent(id)}/analyse`, { method:'POST', body: JSON.stringify(body) });
-    toast('Analysing… max-reasoning can take a minute or two.');
-    if (analyseTimer) clearInterval(analyseTimer);
-    analyseTimer = setInterval(async () => {
-      let s;
-      try { s = await api(`/api/groups/${encodeURIComponent(id)}/analyse/status`); }
-      catch (_) { return; } // transient — keep polling
-      if (s.status === 'running') return;
-      clearInterval(analyseTimer); analyseTimer = null; done();
-      if (s.status === 'done') { toast((s.delivered ? 'Report generated and sent to WhatsApp' : 'Report generated') + ctxNote + '.'); loadReports(id); }
-      else if (s.status === 'empty') toast('Not enough messages in that window.', true);
-      else if (s.status === 'error') toast(s.error || 'Analysis failed.', true);
-      else loadReports(id);
-    }, 3000);
-  } catch (e) { toast(e.message, true); done(); }
+    toast('Analysing… this can take a minute or two.');
+    pollAnalyse(id, ctxNote);
+  } catch (e) { toast(e.message, true); setRunBtn(false); }
 }
+
+// Resume the spinner/poll if an analysis for this group is already running (e.g. after navigating
+// away and back, or a page reload mid-run).
+async function resumeAnalyseIfRunning(id) {
+  try {
+    const s = await api(`/api/groups/${encodeURIComponent(id)}/analyse/status`);
+    if (s.status === 'running') pollAnalyse(id);
+  } catch (_) {}
+}
+
+// Backgrounded tabs throttle setInterval; reconcile as soon as the tab regains focus.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && analysingGroup && !analyseTimer) pollAnalyse(analysingGroup);
+});
 
 // ---------- master view ----------
 let masterInited = false;
