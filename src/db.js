@@ -95,6 +95,7 @@ ensureColumn('reports', 'metrics_json', `metrics_json TEXT`);
 ensureColumn('reports', 'cluster_id',   `cluster_id TEXT`);
 ensureColumn('schedules', 'type',       `type TEXT NOT NULL DEFAULT 'group'`); // legacy; all schedules are group runs now
 ensureColumn('messages',  'wa_id',      `wa_id TEXT`); // WhatsApp message id, for idempotent backfill
+ensureColumn('report_runs', 'note',     `note TEXT`); // human-readable outcome (e.g. "no active groups")
 db.exec(`CREATE INDEX IF NOT EXISTS idx_rep_scope ON reports(scope, period_start, period_end);`);
 // Unique on wa_id so live capture and reconnect-backfill never double-insert (NULLs allowed for old rows).
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_waid ON messages(wa_id) WHERE wa_id IS NOT NULL;`);

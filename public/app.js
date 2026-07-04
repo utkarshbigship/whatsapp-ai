@@ -492,37 +492,44 @@ async function runMasterAnalyse(){
   btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Starting…';
   try {
     const res = await api('/api/master/analyse', { method:'POST', body: JSON.stringify(body) });
-    if (res._status === 202) toast('A run is already in progress — showing its progress.');
-    startProgressPolling(clusterId);
+    if (res.status === 'in_progress') toast('A run is already in progress — showing its progress.');
+    startProgressPolling(clusterId, res.runId); // poll THIS run by id (not "latest")
   } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Analyse all groups'; }
 }
 
 function renderProgress(run){
   const panel = $('#masterProgress');
   const total = run.total_groups || 0, done = run.completed_groups || 0;
-  const pct = total ? Math.round(done / total * 100) : 0;
+  const pct = total ? Math.round(done / total * 100) : (run.phase === 'groups' ? 0 : 100);
   let label, fill = pct;
-  if (run.phase === 'master') { label = 'All group reports saved. Aggregating master report…'; fill = 100; }
-  else if (run.phase === 'done') { label = 'Done.'; fill = 100; }
-  else if (run.phase === 'error') { label = 'Run failed.'; fill = 100; }
-  else { label = `Generating group reports… ${done}/${total}${run.current_group ? ' — ' + esc(run.current_group) : ''}`; }
+  if (run.phase === 'error') { label = 'Run failed' + (run.error ? ': ' + esc(run.error) : ''); fill = 100; }
+  else if (run.phase === 'done') { label = run.note ? esc(run.note) : 'Done.'; fill = 100; }
+  else if (run.phase === 'master') { label = 'All group reports saved. Aggregating master report…'; fill = 100; }
+  else { // groups
+    label = total === 0
+      ? 'No active groups with messages in this window — nothing to analyse.'
+      : `Generating group reports… ${done}/${total}${run.current_group ? ' — ' + esc(run.current_group) : ''}`;
+  }
   panel.innerHTML = `<div class="progress-label">${label}</div>
     <div class="progress-bar"><div class="progress-fill ${run.phase==='error'?'err':''}" style="width:${fill}%"></div></div>`;
 }
 
-function startProgressPolling(clusterId){
+function startProgressPolling(clusterId, runId){
   const panel = $('#masterProgress'); panel.style.display = 'block';
   clearInterval(progressTimer);
+  const qs = runId ? `runId=${encodeURIComponent(runId)}` : `clusterId=${encodeURIComponent(clusterId)}`;
   const tick = async () => {
     try {
-      const { run } = await api(`/api/master/progress?clusterId=${encodeURIComponent(clusterId)}`);
+      const { run } = await api(`/api/master/progress?${qs}`);
       if (!run) { panel.style.display = 'none'; clearInterval(progressTimer); progressTimer = null; return; }
       renderProgress(run);
       if (run.status === 'complete' || run.status === 'error') {
         clearInterval(progressTimer); progressTimer = null;
         $('#mRunBtn').disabled = false; $('#mRunBtn').textContent = 'Analyse all groups';
-        toast(run.status === 'error' ? ('Run failed: ' + (run.error || '')) : 'Master report ready.', run.status === 'error');
-        setTimeout(() => { panel.style.display = 'none'; }, 2500);
+        if (run.status === 'error') toast('Run failed: ' + (run.error || ''), true);
+        else if (run.note) toast(run.note, true);      // e.g. no active groups / nothing to aggregate
+        else toast('Master report ready.');
+        setTimeout(() => { panel.style.display = 'none'; }, 3000);
         loadMasterReports();
       }
     } catch (_) {}
