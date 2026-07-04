@@ -30,16 +30,20 @@ function windowForMode(mode) {
   return todaySoFarWindowIST();
 }
 
+const nowSec = () => Math.floor(Date.now() / 1000);
+
 /**
- * Generate group reports for a frozen snapshot of active groups, optionally then the master.
- * Returns the run id. Progress is tracked in report_runs.
+ * Start a batch: synchronously freeze the active-group set, create the run record, and launch the
+ * heavy work in the background. Returns { runId, alreadyRunning } IMMEDIATELY so callers (and the
+ * dashboard) can track this EXACT run by id — never a stale "latest" one. Throws only on genuine
+ * setup errors (surfaced to the user), never silently.
  */
-async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartReuse = false, withMaster = false, contextReportIds = [] }) {
+function startBatch({ clusterId = 'all', window, trigger = 'manual', smartReuse = false, withMaster = false, contextReportIds = [] } = {}) {
   // Serialize batch-level runs: a group batch and a manual master must never overlap.
   if (runlock.globalStatus().running) {
-    logger.warn('runBatch: another batch is already running — skipping this request.');
+    logger.warn('startBatch: another batch is already running — returning the in-progress run.');
     const latest = db.getLatestRun(null);
-    return latest ? latest.id : null;
+    return { runId: latest ? latest.id : null, alreadyRunning: true };
   }
 
   const hasExplicit = window && (window.from || window.fromDate || window.hours);
@@ -59,8 +63,20 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
     window_from: from, window_to: cutoff, group_ids: groupIds,
   });
 
+  // Hold the lock now (synchronously) so a second click can't start a parallel run.
   runlock.beginGlobal();
   runlock.begin(clusterId); // per-cluster, for the dashboard's status display
+
+  // Fire the heavy work; the dashboard polls the run by id.
+  runBatchWork(runId, { from, cutoff, label, active, groupIds, clusterId, trigger, smartReuse, withMaster, contextReportIds })
+    .catch((e) => logger.error('runBatchWork crashed:', e.message));
+
+  return { runId, alreadyRunning: false };
+}
+
+/** The actual work of a batch (group reports → optional master). Always releases the lock. */
+async function runBatchWork(runId, ctx) {
+  const { from, cutoff, label, active, groupIds, clusterId, trigger, smartReuse, withMaster, contextReportIds } = ctx;
   try {
     let done = 0;
     const tasks = active.map((g) => async () => {
@@ -69,7 +85,7 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
       if (smartReuse) {
         const last = db.getLatestGroupReport(g.group_id);
         if (last && last.period_start === from && last.period_end === cutoff &&
-            (Math.floor(Date.now() / 1000) - last.created_at) < FRESH_SECONDS &&
+            (nowSec() - last.created_at) < FRESH_SECONDS &&
             db.countMessagesSince(last.period_end, [g.group_id]).messages === 0) {
           reused = true;
         }
@@ -77,8 +93,7 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
       if (!reused) {
         await generateReport({
           groupId: g.group_id, groupName: g.group_name,
-          window: { from, to: cutoff, label },
-          trigger, // reports always run at max reasoning (config.deepseek.reasoningEffort)
+          window: { from, to: cutoff, label }, trigger,
         }).catch((e) => logger.error(`Run group ${g.group_name}: ${e.message}`));
       }
       done += 1;
@@ -92,16 +107,23 @@ async function runBatch({ clusterId = 'all', window, trigger = 'manual', smartRe
         clusterId, window: { from, to: cutoff, label }, groupIds, trigger, contextReportIds,
       });
       if (r) db.updateRun(runId, { master_report_id: r.reportId });
+      else db.updateRun(runId, {
+        note: active.length
+          ? 'Group reports ran, but none could be aggregated into a master for this window.'
+          : 'No active groups with messages in this window — nothing to analyse.',
+      });
     }
-    db.updateRun(runId, { phase: 'done', status: 'complete', finished_at: Math.floor(Date.now() / 1000) });
+    db.updateRun(runId, { phase: 'done', status: 'complete', finished_at: nowSec() });
   } catch (e) {
     logger.error('runBatch failed:', e.message);
-    db.updateRun(runId, { phase: 'error', status: 'error', error: e.message, finished_at: Math.floor(Date.now() / 1000) });
+    db.updateRun(runId, { phase: 'error', status: 'error', error: e.message, finished_at: nowSec() });
   } finally {
     runlock.end(clusterId);
     runlock.endGlobal();
   }
-  return runId;
 }
 
-module.exports = { runBatch };
+/** Back-compat wrapper (scheduler): start the batch and resolve with its run id. */
+async function runBatch(opts) { return startBatch(opts).runId; }
+
+module.exports = { runBatch, startBatch };

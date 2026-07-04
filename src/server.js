@@ -176,33 +176,32 @@ function start() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Progress of the latest run for a cluster (drives the dashboard progress panel).
+  // Progress of a specific run (by id) — or the latest run for a cluster as a fallback.
   app.get('/api/master/progress', requireAuth, (req, res) => {
     try {
+      const runId = req.query.runId ? parseInt(req.query.runId, 10) : null;
       const clusterId = req.query.clusterId || 'all';
-      const run = db.getLatestRun(clusterId) || db.getLatestRun(null);
+      const run = runId ? db.getRun(runId) : (db.getLatestRun(clusterId) || db.getLatestRun(null));
       res.json({ run: run || null, lock: runlock.anyBatchRunning() });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Trigger the full pipeline (group reports -> master) asynchronously.
+  // Trigger the full pipeline (group reports -> master). startBatch creates the run synchronously
+  // and returns its id so the dashboard polls THIS exact run (never a stale "latest" one). Setup
+  // errors throw here and surface to the user instead of failing silently.
   // body: { clusterId?, fromDate?, toDate?, hours?, contextReportIds? }
   app.post('/api/master/analyse', requireAuth, (req, res) => {
     const clusterId = req.body?.clusterId || 'all';
     try {
-      // Serialize against ANY batch (scheduled group run or another manual master).
-      const lock = runlock.anyBatchRunning();
-      if (lock.running) return res.status(202).json({ status: 'in_progress', startedAt: lock.startedAt });
-
       const { fromDate, toDate, hours } = req.body || {};
       const contextReportIds = req.body?.contextReportIds || [];
       // Date range / hours -> window; otherwise default to today-so-far snapshot (cutoff = now).
       const window = (fromDate && toDate) ? { fromDate, toDate } : (hours ? { hours } : { mode: 'today-so-far' });
-      // Fire-and-forget; the dashboard polls /api/master/progress.
-      orchestrator.runBatch({ clusterId, window, trigger: 'dashboard', smartReuse: true, withMaster: true, contextReportIds })
-        .catch((e) => logger.error('master runBatch:', e.message));
-      res.json({ status: 'started' });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+      const { runId, alreadyRunning } = orchestrator.startBatch({
+        clusterId, window, trigger: 'dashboard', smartReuse: true, withMaster: true, contextReportIds,
+      });
+      res.json({ runId, status: alreadyRunning ? 'in_progress' : 'started' });
+    } catch (e) { logger.error('master analyse:', e.message); res.status(500).json({ error: e.message }); }
   });
 
   // ---- clusters ----
