@@ -226,7 +226,7 @@ body {
 .btn-ghost.active { color: var(--text); border-color: var(--signal-dim); background: var(--panel-2); }
 
 /* scroll fix: panes need an explicit height to scroll under the fixed topbar */
-#masterView, #settingsView { height: calc(100vh - 56px); overflow-y: auto; }
+#masterView, #settingsView, #costsView { height: calc(100vh - 56px); overflow-y: auto; }
 
 .cluster-pick { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 
