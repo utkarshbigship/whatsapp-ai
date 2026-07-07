@@ -51,8 +51,14 @@ function start() {
   app.post('/api/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
   app.get('/api/me', (req, res) => res.json({ authed: !!(req.session && req.session.authed) }));
 
-  // serve static AFTER auth routes; login page handles gating client-side
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+  // serve static AFTER auth routes; login page handles gating client-side.
+  // index.html must never be cached — it's what decides which JS/CSS the browser loads, so a
+  // stale cached copy would silently hide new features after a deploy (e.g. a new nav tab).
+  app.use(express.static(path.join(__dirname, '..', 'public'), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    },
+  }));
 
   // ---- data ----
   app.get('/api/groups', requireAuth, (req, res) => {
