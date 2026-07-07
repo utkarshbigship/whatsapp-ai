@@ -22,15 +22,24 @@ module.exports = {
   deepseek: {
     baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
     model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
-    // Reasoning depth. Native values: high | max. 'high' is strong for extraction while leaving
-    // budget for the full report — 'max' spends almost the whole token budget on hidden reasoning,
-    // truncating the output (blank metrics) and taking ~10min. Use 'max' only if you accept that.
-    reasoningEffort: process.env.DEEPSEEK_REASONING || 'high',
-    // Output cap. Reasoning tokens share this budget, and a full table + AWB journeys + JSON can be
-    // long. Too low = report truncated before the JSON block, which zeroes all metrics.
-    maxOutputTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '40000', 10),
-    // Per-request timeout (ms). Prevents the SDK's 10-min default from hanging a job.
-    timeoutMs: parseInt(process.env.DEEPSEEK_TIMEOUT_MS || '150000', 10),
+    // Reasoning depth. Native values: high | max. 'max' = unlimited reasoning budget, exhaustive —
+    // the highest quality, at the cost of latency and output-token spend. Kept on 'max' by design;
+    // handle the resulting latency via streaming + generous max_tokens below, not by lowering this.
+    reasoningEffort: process.env.DEEPSEEK_REASONING || 'max',
+    // Output cap. Reasoning tokens share this budget; 'max' effort can use ~4x more than 'high'
+    // (DeepSeek's own benchmarks). Too low = report truncated before the JSON block. Cheap to raise
+    // (DeepSeek output is ~10x cheaper than Gemini) — err generous.
+    maxOutputTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS || '80000', 10),
+    // Streaming timeouts (the call streams; a flat overall timeout was killing healthy 'max'
+    // requests mid-flight and forcing an expensive full restart — DeepSeek's own official-API
+    // benchmarks show ~128s AVERAGE time-to-first-token, so a <3min flat timeout has almost no
+    // margin). These replace that flat timeout with activity-based limits instead:
+    //   - firstByteTimeoutMs: how long to wait for the FIRST streamed chunk (thinking can be slow to start).
+    //   - idleTimeoutMs: how long to wait between chunks once streaming has started (resets on every chunk).
+    //   - hardTimeoutMs: absolute ceiling for the whole call, regardless of activity (last-resort safety net).
+    firstByteTimeoutMs: parseInt(process.env.DEEPSEEK_FIRST_BYTE_TIMEOUT_MS || '300000', 10),  // 5 min
+    idleTimeoutMs: parseInt(process.env.DEEPSEEK_IDLE_TIMEOUT_MS || '120000', 10),             // 2 min
+    hardTimeoutMs: parseInt(process.env.DEEPSEEK_HARD_TIMEOUT_MS || '1500000', 10),            // 25 min
     // Transcript cap (chars). DeepSeek V4 has a 1M-token context; this keeps input bounded.
     maxTranscriptChars: parseInt(process.env.DEEPSEEK_MAX_TRANSCRIPT_CHARS || '600000', 10),
     retries: 3,
