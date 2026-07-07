@@ -25,8 +25,7 @@ async function getClient() {
     aiClient = new OpenAI({
       apiKey: process.env.DEEPSEEK_API_KEY,
       baseURL: config.deepseek.baseUrl,
-      timeout: config.deepseek.timeoutMs, // avoid the SDK's 10-min default hanging a job
-      maxRetries: 0,                      // we run our own retry loop below
+      maxRetries: 0, // we run our own retry loop below; timing is handled per-request (streaming)
     });
   }
   return aiClient;
@@ -55,31 +54,79 @@ function buildTranscript(messages) {
 }
 
 /**
+ * Stream one DeepSeek call and return { text, usage, finishReason }. Uses ACTIVITY-based
+ * timeouts (not a flat overall timeout): a generous wait for the first chunk (thinking can be
+ * slow to start at max reasoning), a shorter idle window that resets on every subsequent chunk,
+ * and a last-resort hard ceiling. This lets a genuinely slow-but-progressing 'max' reasoning call
+ * run to completion instead of being killed mid-flight and restarted from scratch (which was
+ * turning one slow call into several, compounding latency and cost).
+ */
+async function streamOnce(ai, payload) {
+  const controller = new AbortController();
+  let idleTimer = null;
+  const clearIdle = () => { if (idleTimer) clearTimeout(idleTimer); };
+  const armIdle = (ms) => { clearIdle(); idleTimer = setTimeout(() => controller.abort(), ms); };
+  const hardTimer = setTimeout(() => controller.abort(), config.deepseek.hardTimeoutMs);
+
+  try {
+    armIdle(config.deepseek.firstByteTimeoutMs);
+    const stream = await ai.chat.completions.create(
+      { ...payload, stream: true, stream_options: { include_usage: true } },
+      { signal: controller.signal },
+    );
+
+    let text = '';
+    let usage = null;
+    let finishReason = null;
+    let gotChunk = false;
+    for await (const chunk of stream) {
+      gotChunk = true;
+      armIdle(config.deepseek.idleTimeoutMs); // reset the idle window on every chunk received
+      const choice = chunk.choices?.[0];
+      if (choice?.delta?.content) text += choice.delta.content;
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
+      if (chunk.usage) usage = chunk.usage; // final chunk (empty choices) carries usage
+    }
+    return { text: text.trim(), usage, finishReason };
+  } catch (err) {
+    if (controller.signal.aborted) {
+      const err2 = new Error(`stream stalled (no data received in time)`);
+      err2.isTimeout = true;
+      throw err2;
+    }
+    throw err;
+  } finally {
+    clearIdle();
+    clearTimeout(hardTimer);
+  }
+}
+
+/**
  * Shared DeepSeek call with retry/backoff. Returns trimmed text or null.
  * Reasoning depth defaults to config.deepseek.reasoningEffort (max) for every report.
  */
 async function generate({ systemInstruction, userContent, reasoningEffort, meta }) {
   const ai = await getClient();
+  const payload = {
+    model: config.deepseek.model,
+    messages: [
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: userContent },
+    ],
+    reasoning_effort: reasoningEffort || config.deepseek.reasoningEffort,
+    max_tokens: config.deepseek.maxOutputTokens,
+  };
+
   let lastErr;
   for (let attempt = 1; attempt <= config.deepseek.retries; attempt++) {
     try {
-      const response = await ai.chat.completions.create({
-        model: config.deepseek.model,
-        messages: [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: userContent },
-        ],
-        reasoning_effort: reasoningEffort || config.deepseek.reasoningEffort,
-        max_tokens: config.deepseek.maxOutputTokens,
-      });
-      const choice = response?.choices?.[0];
-      const text = (choice?.message?.content || '').trim();
+      const { text, usage, finishReason } = await streamOnce(ai, payload);
       // A 'length' finish means the model was cut off — the trailing JSON counts block is
       // likely missing, which silently zeroes all metrics. Surface it loudly.
-      if (choice?.finish_reason === 'length') {
-        logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS or lower DEEPSEEK_REASONING.`);
+      if (finishReason === 'length') {
+        logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS.`);
       }
-      if (text) { recordUsage(response?.usage, meta); return text; }
+      if (text) { recordUsage(usage, meta); return text; }
       lastErr = new Error('Empty response');
     } catch (err) {
       lastErr = err;
