@@ -34,7 +34,14 @@ module.exports = {
     // Transcript cap (chars). DeepSeek V4 has a 1M-token context; this keeps input bounded.
     maxTranscriptChars: parseInt(process.env.DEEPSEEK_MAX_TRANSCRIPT_CHARS || '600000', 10),
     retries: 3,
+    // Pricing for cost tracking. USD per 1,000,000 tokens (V4 Pro list price). Output includes
+    // reasoning tokens. Adjust if your provider/tier differs.
+    priceInputPerM:  parseFloat(process.env.DEEPSEEK_PRICE_INPUT  || '0.435'),
+    priceOutputPerM: parseFloat(process.env.DEEPSEEK_PRICE_OUTPUT || '0.87'),
   },
+
+  // USD→INR rate for showing costs in rupees. Update as needed (no live FX lookup).
+  usdInr: parseFloat(process.env.USD_INR || '86'),
 
   // Multi-agent run settings
   agents: {

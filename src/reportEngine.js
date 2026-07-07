@@ -80,7 +80,8 @@ async function generateReport({ groupId, groupName, window, contextReportIds, tr
     }));
   }
 
-  const report = await analyze({ groupName, messages, windowLabel: label, priorReports });
+  const report = await analyze({ groupName, messages, windowLabel: label, priorReports,
+    meta: { scope: 'group', groupId, groupName, trigger } });
   if (!report) return null;
 
   const metrics = parseMetrics(report);
@@ -188,7 +189,9 @@ async function generateMasterReport({ clusterId = 'all', window, contextReportId
     }));
   }
 
-  const prose = await analyzeMaster({ windowLabel: label, groupReports, priorMasterReports });
+  const masterName = clusterId === 'all' ? 'All Groups (Master)' : `Master — ${clusterId}`;
+  const prose = await analyzeMaster({ windowLabel: label, groupReports, priorMasterReports,
+    meta: { scope: 'master', groupId: `${config.master.groupIdPrefix}:${clusterId}`, groupName: masterName, trigger } });
   if (!prose) return null;
 
   const totalsBlock = renderTotalsBlock(totals, groupReports.length, withMetrics.length);
@@ -197,7 +200,7 @@ async function generateMasterReport({ clusterId = 'all', window, contextReportId
 
   const ins = db.insertReport({
     group_id: `${config.master.groupIdPrefix}:${clusterId}`,
-    group_name: clusterId === 'all' ? 'All Groups (Master)' : `Master — ${clusterId}`,
+    group_name: masterName,
     report, message_count: messageCount, window_label: label,
     period_start: from, period_end: to,
     model: config.deepseek.model, trigger,

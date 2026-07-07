@@ -21,8 +21,8 @@ function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repla
 function stripTokens(t){ return (t||'').replace(/\{\{G:[^|}]+\|([^}]*)\}\}/g, '$1'); }
 function timeAgo(u){ const s=Math.floor(Date.now()/1000)-u; if(s<60)return'just now';
   if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
-function clock(u){ return new Date(u*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
-function dt(u){ return new Date(u*1000).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}); }
+function clock(u){ return new Date(u*1000).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',hour12:false}); }
+function dt(u){ return new Date(u*1000).toLocaleString('en-GB', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:false}); }
 function todayStr(){ return new Date().toISOString().slice(0,10); }
 // datetime-local helpers (local clock, "YYYY-MM-DDTHH:MM")
 function pad(n){ return String(n).padStart(2,'0'); }
@@ -225,16 +225,20 @@ function setView(v){
   view = v;
   $('#viewGroups').classList.toggle('active', v==='groups');
   $('#viewMaster').classList.toggle('active', v==='master');
+  $('#viewCosts').classList.toggle('active', v==='costs');
   $('#viewSettings').classList.toggle('active', v==='settings');
   $('#groupsView').style.display = v==='groups' ? '' : 'none';
   $('#masterView').style.display = v==='master' ? 'block' : 'none';
+  $('#costsView').style.display = v==='costs' ? 'block' : 'none';
   $('#settingsView').style.display = v==='settings' ? 'block' : 'none';
   if (v==='groups') $('#groupsView').classList.remove('show-detail'); // mobile: land on the list
   if (v==='master') initMasterView();
+  if (v==='costs') initCostsView();
   if (v==='settings') initSettingsView();
 }
 $('#viewGroups').addEventListener('click', () => setView('groups'));
 $('#viewMaster').addEventListener('click', () => setView('master'));
+$('#viewCosts').addEventListener('click', () => setView('costs'));
 $('#viewSettings').addEventListener('click', () => setView('settings'));
 
 // ---------- groups ----------
@@ -359,7 +363,7 @@ async function loadMessages(id) {
     const { messages } = await api(`/api/groups/${encodeURIComponent(id)}/messages?limit=80`);
     const box = $('#messages');
     if (!messages.length) { box.innerHTML = '<div class="loading">No messages stored.</div>'; return; }
-    box.innerHTML = messages.slice().reverse().map((m) => `
+    box.innerHTML = messages.slice().sort((a, b) => a.timestamp - b.timestamp).map((m) => `
       <div class="msg"><span class="t">${clock(m.timestamp)}</span>
         <span class="a">${esc(m.author_name||m.author||'?')}</span>
         <span class="b ${m.msg_type&&m.msg_type!=='chat'?'media':''}">${esc(m.body|| '['+(m.msg_type||'media')+']')}</span></div>`).join('');
@@ -535,6 +539,42 @@ function startProgressPolling(clusterId, runId){
     } catch (_) {}
   };
   tick(); progressTimer = setInterval(tick, 2000);
+}
+
+// ---------- costs ----------
+const inr = (n) => '₹' + (Number(n)||0).toLocaleString('en-IN', {maximumFractionDigits: 2});
+const usd = (n) => '$' + (Number(n)||0).toLocaleString('en-US', {maximumFractionDigits: 4});
+const num = (n) => (Number(n)||0).toLocaleString('en-IN');
+
+async function initCostsView(){
+  const sum = $('#costsSummary'), log = $('#costsLog');
+  sum.innerHTML = ''; log.className = 'loading'; log.textContent = 'Loading…';
+  try {
+    const d = await api('/api/usage?limit=300');
+    $('#costsRate').textContent = `USD→INR ${d.rate}`;
+    const card = (v, k) => `<div class="metric"><span class="v">${v}</span><span class="k">${k}</span></div>`;
+    sum.innerHTML =
+      card(inr(d.total.cost_inr), 'Total cost (₹)') +
+      card(usd(d.total.cost_usd), 'Total cost ($)') +
+      card(inr(d.today.cost_inr), 'Today (₹)') +
+      card(inr(d.last24h.cost_inr), 'Last 24h (₹)') +
+      card(num(d.total.input_tokens), 'Input tokens') +
+      card(num(d.total.output_tokens), 'Output tokens') +
+      card(num(d.total.calls), 'API calls');
+    log.className = '';
+    if (!d.log.length) { log.innerHTML = '<div class="loading">No API calls logged yet.</div>'; return; }
+    const rows = d.log.map((r) => `<tr>
+      <td>${dt(r.ts)}</td>
+      <td>${r.scope==='master' ? '<span class="chip-master">master</span>' : 'group'}</td>
+      <td>${esc(r.group_name || r.group_id || '—')}</td>
+      <td>${num(r.input_tokens)}</td>
+      <td>${num(r.output_tokens)}</td>
+      <td>${inr(r.cost_inr)}</td>
+      <td>${usd(r.cost_usd)}</td></tr>`).join('');
+    log.innerHTML = `<div class="md-table-wrap"><table class="md-table">
+      <thead><tr><th>Time</th><th>Scope</th><th>Group / Master</th><th>Input</th><th>Output</th><th>Cost (₹)</th><th>Cost ($)</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  } catch (e) { log.className=''; log.innerHTML = `<div class="loading">${esc(e.message)}</div>`; }
 }
 
 // ---------- settings ----------

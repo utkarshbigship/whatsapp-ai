@@ -204,6 +204,21 @@ function start() {
     } catch (e) { logger.error('master analyse:', e.message); res.status(500).json({ error: e.message }); }
   });
 
+  // ---- usage / cost audit ----
+  app.get('/api/usage', requireAuth, (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit || '200', 10), 1000);
+      const now = Math.floor(Date.now() / 1000);
+      res.json({
+        log: db.getUsageLog(limit),
+        total: db.getUsageSummary(0),
+        last24h: db.getUsageSummary(now - 86400),
+        today: db.getUsageSummary(tzTodayStart()),
+        rate: config.usdInr,
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ---- clusters ----
   app.get('/api/clusters', requireAuth, (req, res) => {
     try { res.json({ clusters: db.listClusters() }); }

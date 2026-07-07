@@ -1,6 +1,22 @@
 const fs     = require('fs');
 const config = require('../config');
 const logger = require('./logger');
+const db     = require('./db');
+
+// Log one DeepSeek call's token usage + cost to the audit log. `meta` carries scope + group name.
+function recordUsage(usage, meta) {
+  if (!usage || !meta) return;
+  try {
+    const inTok  = usage.prompt_tokens || 0;
+    const outTok = usage.completion_tokens || 0; // includes reasoning tokens (billed as output)
+    const usd = (inTok / 1e6) * config.deepseek.priceInputPerM + (outTok / 1e6) * config.deepseek.priceOutputPerM;
+    db.insertUsage({
+      scope: meta.scope, group_id: meta.groupId || null, group_name: meta.groupName || null,
+      model: config.deepseek.model, input_tokens: inTok, output_tokens: outTok,
+      cost_usd: +usd.toFixed(6), cost_inr: +(usd * config.usdInr).toFixed(4), trigger: meta.trigger || null,
+    });
+  } catch (e) { logger.warn(`Usage log failed: ${e.message}`); }
+}
 
 let aiClient = null;
 async function getClient() {
@@ -42,7 +58,7 @@ function buildTranscript(messages) {
  * Shared DeepSeek call with retry/backoff. Returns trimmed text or null.
  * Reasoning depth defaults to config.deepseek.reasoningEffort (max) for every report.
  */
-async function generate({ systemInstruction, userContent, reasoningEffort }) {
+async function generate({ systemInstruction, userContent, reasoningEffort, meta }) {
   const ai = await getClient();
   let lastErr;
   for (let attempt = 1; attempt <= config.deepseek.retries; attempt++) {
@@ -63,7 +79,7 @@ async function generate({ systemInstruction, userContent, reasoningEffort }) {
       if (choice?.finish_reason === 'length') {
         logger.warn(`DeepSeek output hit max_tokens (${config.deepseek.maxOutputTokens}) — report may be truncated; raise DEEPSEEK_MAX_TOKENS or lower DEEPSEEK_REASONING.`);
       }
-      if (text) return text;
+      if (text) { recordUsage(response?.usage, meta); return text; }
       lastErr = new Error('Empty response');
     } catch (err) {
       lastErr = err;
@@ -124,7 +140,7 @@ function parseMetrics(text) {
  * Produce an escalation report for a group's messages.
  * @returns {Promise<string|null>}
  */
-async function analyze({ groupName, messages, windowLabel, priorReports = [] }) {
+async function analyze({ groupName, messages, windowLabel, priorReports = [], meta }) {
   if (!messages || messages.length < config.analysis.minMessages) return null;
 
   const systemInstruction = loadPrompt(config.prompts.analyst);
@@ -147,7 +163,7 @@ async function analyze({ groupName, messages, windowLabel, priorReports = [] }) 
     priorBlock +
     `Transcript:\n"""\n${transcript}\n"""`;
 
-  return generate({ systemInstruction, userContent });
+  return generate({ systemInstruction, userContent, meta });
 }
 
 /** Build the master user message for one cluster's group reports (or batch digests). */
@@ -177,7 +193,7 @@ function masterUser(windowLabel, combinedInput, priorMasterReports = [], extraNo
  * @param {Array}  [opts.priorMasterReports]  [{label, report}]
  * @returns {Promise<string|null>}  prose only
  */
-async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [] }) {
+async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [], meta }) {
   if (!groupReports || !groupReports.length) return null;
   const systemInstruction = loadPrompt(config.prompts.master);
 
@@ -210,6 +226,7 @@ async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [
         const d = await generate({
           systemInstruction,
           userContent: masterUser(windowLabel, batches[i].join('\n'), [], note),
+          meta,
         });
         if (d) digests.push(`### BATCH DIGEST ${i + 1}\n${d}`);
       } catch (e) {
@@ -228,6 +245,7 @@ async function analyzeMaster({ windowLabel, groupReports, priorMasterReports = [
     return await generate({
       systemInstruction,
       userContent: masterUser(windowLabel, combinedInput, priorMasterReports),
+      meta,
     });
   } catch (e) {
     // Master is best-effort — a failure returns null so the batch completes gracefully.

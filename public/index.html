@@ -33,6 +33,7 @@
       <div class="view-toggle">
         <button id="viewGroups" class="btn-ghost active">Groups</button>
         <button id="viewMaster" class="btn-ghost">Master</button>
+        <button id="viewCosts" class="btn-ghost">Costs</button>
         <button id="viewSettings" class="btn-ghost">Settings</button>
       </div>
       <div class="status"><span class="dot"></span><span id="statusText">live</span></div>
@@ -69,6 +70,18 @@
         <div id="masterProgress" class="progress-panel" style="display:none"></div>
       </div>
       <div class="section"><h3>Master reports</h3><div id="masterReports"><div class="loading">Loading…</div></div></div>
+    </main>
+
+    <main class="detail" id="costsView" style="display:none">
+      <div class="detail-head"><div><h2>Costs & token usage</h2><div class="sub">DeepSeek V4 Pro — per-request audit</div></div></div>
+      <div class="section">
+        <h3>Summary</h3>
+        <div id="costsSummary" class="metrics"></div>
+      </div>
+      <div class="section">
+        <h3>Audit log <span id="costsRate" class="ver"></span></h3>
+        <div id="costsLog" class="loading">Loading…</div>
+      </div>
     </main>
 
     <main class="detail" id="settingsView" style="display:none">

@@ -99,6 +99,24 @@ ensureColumn('report_runs', 'note',     `note TEXT`); // human-readable outcome 
 db.exec(`CREATE INDEX IF NOT EXISTS idx_rep_scope ON reports(scope, period_start, period_end);`);
 // Unique on wa_id so live capture and reconnect-backfill never double-insert (NULLs allowed for old rows).
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_msg_waid ON messages(wa_id) WHERE wa_id IS NOT NULL;`);
+
+// Per-request LLM usage + cost audit log (one row per DeepSeek API call).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            INTEGER DEFAULT (strftime('%s','now')),
+    scope         TEXT,           -- 'group' | 'master'
+    group_id      TEXT,
+    group_name    TEXT,           -- group name, or the master/cluster name
+    model         TEXT,
+    input_tokens  INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cost_usd      REAL DEFAULT 0,
+    cost_inr      REAL DEFAULT 0,
+    trigger       TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_log(ts);
+`);
 // One-time: disable legacy standalone master schedules — group runs now auto-trigger the master.
 db.exec(`UPDATE schedules SET enabled = 0 WHERE type = 'master'`);
 
@@ -136,6 +154,24 @@ const stmtRecentMessages = db.prepare(`
   SELECT author_name, author, body, msg_type, timestamp
   FROM messages WHERE group_id = @group_id
   ORDER BY timestamp DESC LIMIT @limit
+`);
+
+// --- usage / cost audit log ---
+const stmtInsertUsage = db.prepare(`
+  INSERT INTO usage_log (scope, group_id, group_name, model, input_tokens, output_tokens, cost_usd, cost_inr, trigger)
+  VALUES (@scope, @group_id, @group_name, @model, @input_tokens, @output_tokens, @cost_usd, @cost_inr, @trigger)
+`);
+const stmtUsageLog = db.prepare(`
+  SELECT id, ts, scope, group_id, group_name, model, input_tokens, output_tokens, cost_usd, cost_inr, trigger
+  FROM usage_log ORDER BY ts DESC, id DESC LIMIT @limit
+`);
+const stmtUsageSummarySince = db.prepare(`
+  SELECT COUNT(*) AS calls,
+         COALESCE(SUM(input_tokens),0)  AS input_tokens,
+         COALESCE(SUM(output_tokens),0) AS output_tokens,
+         COALESCE(SUM(cost_usd),0)      AS cost_usd,
+         COALESCE(SUM(cost_inr),0)      AS cost_inr
+  FROM usage_log WHERE ts >= @since
 `);
 
 const stmtInsertReport = db.prepare(`
@@ -280,6 +316,16 @@ module.exports = {
   },
   getKnownGroups(todayStart) { return stmtKnownGroups.all({ todayStart }); },
   getRecentMessages(groupId, limit) { return stmtRecentMessages.all({ group_id: groupId, limit }); },
+
+  insertUsage(row) {
+    return stmtInsertUsage.run({
+      scope: row.scope || 'group', group_id: row.group_id ?? null, group_name: row.group_name ?? null,
+      model: row.model ?? null, input_tokens: row.input_tokens || 0, output_tokens: row.output_tokens || 0,
+      cost_usd: row.cost_usd || 0, cost_inr: row.cost_inr || 0, trigger: row.trigger ?? null,
+    }).lastInsertRowid;
+  },
+  getUsageLog(limit = 200) { return stmtUsageLog.all({ limit }); },
+  getUsageSummary(since = 0) { return stmtUsageSummarySince.get({ since }); },
 
   insertReport(row) {
     return stmtInsertReport.run({ scope: 'group', metrics_json: null, cluster_id: null, ...row });
