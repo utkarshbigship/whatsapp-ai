@@ -50,7 +50,7 @@ module.exports = {
   },
 
   // USD→INR rate for showing costs in rupees. Update as needed (no live FX lookup).
-  usdInr: parseFloat(process.env.USD_INR || '86'),
+  usdInr: parseFloat(process.env.USD_INR || '94'),
 
   // Multi-agent run settings
   agents: {
