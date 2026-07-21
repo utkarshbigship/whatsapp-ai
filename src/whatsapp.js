@@ -41,11 +41,32 @@ async function handleCommand(msg, groupId, groupName) {
   return true;
 }
 
+// A minified page-side error (whatsapp-web.js hooking broken WhatsApp Web internals) surfaces
+// as a useless one-char message like "r". Include the error name + first stack frame so the log
+// says *where* it broke (e.g. WWebJS.getChatModel) instead of a bare letter.
+function errInfo(err) {
+  if (!err) return 'unknown';
+  const name = err.name && err.name !== 'Error' ? `${err.name}: ` : '';
+  const first = (err.stack || '').split('\n').find((l) => /\bat\b/.test(l));
+  return `${name}${err.message || 'no message'}${first ? ` | ${first.trim()}` : ''}`;
+}
+
 function init() {
-  client = new Client({
+  const clientOpts = {
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
     puppeteer: { headless: true, args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--disable-gpu'] },
-  });
+  };
+  // Optionally pin the WhatsApp Web build to a known-good version so a WhatsApp-side update can't
+  // silently break the library's Store hooks. Opt-in via WA_WEB_VERSION.
+  if (config.whatsapp.webVersion) {
+    clientOpts.webVersion = config.whatsapp.webVersion;
+    clientOpts.webVersionCache = {
+      type: 'remote',
+      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${config.whatsapp.webVersion}.html`,
+    };
+    logger.info(`Pinning WhatsApp Web version ${config.whatsapp.webVersion}.`);
+  }
+  client = new Client(clientOpts);
 
   client.on('qr', (qr) => { logger.info('Scan QR with the bot WhatsApp account:'); qrcode.generate(qr, { small: true }); });
   client.on('authenticated', () => logger.info('Authenticated. Session saved.'));
@@ -53,7 +74,7 @@ function init() {
   client.on('ready', async () => {
     isReady = true;
     logger.info('WhatsApp client is READY.');
-    await backfillRecent().catch((e) => logger.warn('Backfill failed:', e.message));
+    await backfillRecent().catch((e) => logger.warn('Backfill failed:', errInfo(e)));
   });
   client.on('disconnected', (reason) => {
     isReady = false;
@@ -73,7 +94,7 @@ function init() {
       if (await handleCommand(msg, groupId, groupName)) return;
       await persistMessage(msg, groupId, groupName);
     } catch (err) {
-      logger.error('Error handling message:', err.message);
+      logger.error('Error handling message:', errInfo(err));
     }
   });
 
@@ -120,7 +141,7 @@ async function backfillRecent() {
   const limit = config.whatsapp.backfillLimit;
   if (!limit || limit < 1) return;
   let chats;
-  try { chats = await client.getChats(); } catch (e) { logger.warn('Backfill getChats failed:', e.message); return; }
+  try { chats = await client.getChats(); } catch (e) { logger.warn('Backfill getChats failed:', errInfo(e)); return; }
   let added = 0, groupsTouched = 0;
   for (const chat of chats) {
     const groupId = chat.id?._serialized || '';
