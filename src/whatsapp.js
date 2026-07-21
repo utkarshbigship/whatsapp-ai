@@ -68,11 +68,32 @@ function init() {
   }
   client = new Client(clientOpts);
 
+  // Watchdog: if 'ready' never fires after auth, the post-auth interface init is hung — almost
+  // always a library-vs-WhatsApp-Web build incompatibility (or a session opened elsewhere). Say so
+  // loudly with the last known loading state instead of leaving a silent "authenticated" dead end.
+  let readyWatch = null;
+  let lastLoading = 'n/a';
+  const armReadyWatch = () => {
+    if (readyWatch) clearTimeout(readyWatch);
+    readyWatch = setTimeout(() => {
+      if (!isReady) {
+        logger.error(`Still not READY ~90s after authentication (last loading: ${lastLoading}). ` +
+          `This is a whatsapp-web.js vs WhatsApp Web build mismatch or a session conflict — ` +
+          `pin a known-good build via WA_WEB_VERSION and/or upgrade whatsapp-web.js.`);
+      }
+    }, 90000);
+    if (readyWatch.unref) readyWatch.unref();
+  };
+
   client.on('qr', (qr) => { logger.info('Scan QR with the bot WhatsApp account:'); qrcode.generate(qr, { small: true }); });
-  client.on('authenticated', () => logger.info('Authenticated. Session saved.'));
+  // Surface the init pipeline so a hang is diagnosable: which % / which state it stalls at.
+  client.on('loading_screen', (percent, message) => { lastLoading = `${percent}% ${message || ''}`.trim(); logger.info(`Loading: ${lastLoading}`); });
+  client.on('change_state', (state) => logger.info(`WhatsApp state: ${state}`)); // CONNECTED | OPENING | PAIRING | TIMEOUT | CONFLICT | UNPAIRED | ...
+  client.on('authenticated', () => { logger.info('Authenticated. Session saved.'); armReadyWatch(); });
   client.on('auth_failure', (m) => logger.error('Auth failure:', m, '— delete .wwebjs_auth and re-scan.'));
   client.on('ready', async () => {
     isReady = true;
+    if (readyWatch) { clearTimeout(readyWatch); readyWatch = null; }
     logger.info('WhatsApp client is READY.');
     await backfillRecent().catch((e) => logger.warn('Backfill failed:', errInfo(e)));
   });
