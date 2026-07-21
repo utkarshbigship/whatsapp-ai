@@ -51,6 +51,21 @@ function errInfo(err) {
   return `${name}${err.message || 'no message'}${first ? ` | ${first.trim()}` : ''}`;
 }
 
+// Resolve a group's display name WITHOUT msg.getChat() — that call runs injected code in the
+// WhatsApp Web page and breaks whenever WhatsApp ships an incompatible web build (the "r" error),
+// which would otherwise drop EVERY message. Capture must not depend on it: the group id is on
+// msg.from directly, and the name falls back to a cached/previously-stored name, else the id.
+const groupNames = new Map(); // groupId -> best known human name (learned when getChat works)
+function rememberGroupName(groupId, name) {
+  if (name && name !== groupId) groupNames.set(groupId, name);
+}
+function resolveGroupName(groupId) {
+  if (groupNames.has(groupId)) return groupNames.get(groupId);
+  const stored = db.getGroupName(groupId); // a real name we saved before the break, if any
+  if (stored) { groupNames.set(groupId, stored); return stored; }
+  return groupId; // degraded but functional — reports still generate, keyed by id
+}
+
 function init() {
   const clientOpts = {
     authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
@@ -106,10 +121,9 @@ function init() {
 
   client.on('message', async (msg) => {
     try {
-      if (!msg.from.endsWith('@g.us')) return;
-      const chat = await msg.getChat();
+      if (!msg.from || !msg.from.endsWith('@g.us')) return;
       const groupId = msg.from;
-      const groupName = chat.name || groupId;
+      const groupName = resolveGroupName(groupId); // no getChat() — capture survives WA-Web breakage
       if (!shouldTrack(groupId, groupName)) return;
 
       if (await handleCommand(msg, groupId, groupName)) return;
@@ -168,6 +182,7 @@ async function backfillRecent() {
     const groupId = chat.id?._serialized || '';
     if (!groupId.endsWith('@g.us')) continue;
     const groupName = chat.name || groupId;
+    rememberGroupName(groupId, chat.name); // learn real names whenever getChats works, for live capture
     if (!shouldTrack(groupId, groupName)) continue;
     try {
       const cursor = db.getLastMessageTs(groupId); // only consider messages newer than what we have
