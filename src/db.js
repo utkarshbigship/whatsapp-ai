@@ -155,6 +155,13 @@ const stmtRecentMessages = db.prepare(`
   FROM messages WHERE group_id = @group_id
   ORDER BY timestamp DESC LIMIT @limit
 `);
+// Last human-readable name we ever stored for a group (name != id). Lets live capture keep a
+// real group name even when whatsapp-web.js's getChat() is broken by a WhatsApp Web update.
+const stmtGroupNameById = db.prepare(`
+  SELECT group_name FROM messages
+  WHERE group_id = @gid AND group_name IS NOT NULL AND group_name <> @gid
+  ORDER BY id DESC LIMIT 1
+`);
 
 // --- usage / cost audit log ---
 const stmtInsertUsage = db.prepare(`
@@ -316,6 +323,7 @@ module.exports = {
   },
   getKnownGroups(todayStart) { return stmtKnownGroups.all({ todayStart }); },
   getRecentMessages(groupId, limit) { return stmtRecentMessages.all({ group_id: groupId, limit }); },
+  getGroupName(groupId) { const r = stmtGroupNameById.get({ gid: groupId }); return r ? r.group_name : null; },
 
   insertUsage(row) {
     return stmtInsertUsage.run({
