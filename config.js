@@ -123,6 +123,13 @@ module.exports = {
     // On (re)connect, pull this many recent messages per group to recover any gap
     // created by a restart/disconnect. 0 disables backfill.
     backfillLimit: parseInt(process.env.WA_BACKFILL_LIMIT || '50', 10),
+    // Pin the WhatsApp Web build. whatsapp-web.js injects into WhatsApp Web and breaks when
+    // WhatsApp ships a new web build its Store hooks don't understand (symptom: getChat/getChats
+    // throwing a minified error like "r"). Setting this to a known-good version freezes the web
+    // build so a silent WhatsApp-side update can't break the library. Empty = use whatever
+    // WhatsApp serves (latest — the default, and the thing that breaks). Find versions at
+    // https://github.com/wppconnect-team/wa-version/tree/main/html
+    webVersion: process.env.WA_WEB_VERSION || '',
   },
 
   logLevel: process.env.LOG_LEVEL || 'info',
